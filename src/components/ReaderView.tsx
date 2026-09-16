@@ -176,6 +176,33 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     };
   }, []);
 
+  // Screen Wake Lock — giữ sáng màn hình khi đang đọc
+  const wakeLockRef = useRef<any>(null);
+  useEffect(() => {
+    if (!settings.keepAwake) return;
+    let cancelled = false;
+    const request = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        }
+      } catch {
+        /* lock tự nhả khi tab ẩn / không hỗ trợ — bỏ qua */
+      }
+    };
+    request();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && !cancelled) request();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      try { wakeLockRef.current?.release(); } catch { /* noop */ }
+      wakeLockRef.current = null;
+    };
+  }, [settings.keepAwake]);
+
   // Handle TTS Play / Pause
   const toggleSpeech = () => {
     if (!('speechSynthesis' in window)) {
@@ -751,6 +778,20 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                 }`}
               >
                 {isAutoScrolling ? 'Đang cuộn (Bật)' : 'Tắt'}
+              </button>
+            </div>
+
+            {/* 7. Keep Screen Awake Toggle */}
+            <div className="pt-2 border-t border-current/10 flex items-center justify-between">
+              <span className="font-semibold">Giữ sáng màn hình:</span>
+              <button
+                id="keep-awake-toggle-btn"
+                onClick={() => onUpdateSettings({ keepAwake: !settings.keepAwake })}
+                className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
+                  settings.keepAwake ? 'bg-amber-600 text-white' : 'bg-current/10 text-current'
+                }`}
+              >
+                {settings.keepAwake ? 'Bật' : 'Tắt'}
               </button>
             </div>
           </div>

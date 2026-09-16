@@ -69,6 +69,7 @@ export interface ReaderSettings {
   speechRate: number; // 0.75 to 1.5
   speechPitch: number; // 0.8 to 1.2
   speechVoiceName?: string;
+  keepAwake: boolean; // giữ sáng màn hình khi đọc
 }
 
 export interface CloudflareConfig {

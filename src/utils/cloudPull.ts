@@ -7,6 +7,40 @@ export interface PullProgress {
   total: number;
 }
 
+// Push lightweight reading position to cloud (fire-and-forget).
+// Callers must throttle — never call per scroll tick.
+export async function pushProgressToCloud(
+  base: string,
+  novelId: string,
+  chapterIndex: number,
+  scrollPercentage: number
+): Promise<void> {
+  await fetch(`${base}/api/novels/progress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ novelId, currentChapterIndex: chapterIndex, scrollPercentage, timeSpentSeconds: 0 })
+  });
+}
+
+export interface CloudProgress {
+  chapter: number;
+  scroll: number;
+  lastReadAt: string;
+}
+
+// Fetch cloud reading position for one novel (null = none/offline).
+export async function fetchCloudProgress(base: string, novelId: string): Promise<CloudProgress | null> {
+  const r = await fetch(`${base}/api/novels/${novelId}`);
+  if (!r.ok) return null;
+  const j = await r.json();
+  const p = j.data?.progress;
+  if (!p) return null;
+  return {
+    chapter: p.current_chapter_index ?? 0,
+    scroll: p.scroll_percentage ?? 0,
+    lastReadAt: p.last_read_at ?? ''
+  };
+}
 // Pull novels from the Cloudflare API that are missing locally.
 // Used on first load so the library auto-fills from D1 via same-origin /api/novels.
 export async function pullMissingNovels(
@@ -53,7 +87,8 @@ export async function pullMissingNovels(
     const progress: ReadingProgress = {
       currentChapterIndex: 0,
       scrollPercentage: 0,
-      lastReadAt: now,
+      // empty = unknown; cloud progress (if any) wins on first merge
+      lastReadAt: '',
       totalTimeSpentSeconds: 0
     };
     const novel: Novel = {

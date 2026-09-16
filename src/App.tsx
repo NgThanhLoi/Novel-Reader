@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Novel, ReaderSettings, CloudflareConfig, NovelStatus } from './types';
 import { 
   getAllNovels, 
@@ -11,7 +11,7 @@ import {
   DEFAULT_SETTINGS
 } from './utils/storage';
 import { syncNovelToCloudflare } from './utils/cloudflareSync';
-import { pullMissingNovels } from './utils/cloudPull';
+import { pullMissingNovels, pushProgressToCloud, fetchCloudProgress } from './utils/cloudPull';
 import { Navbar } from './components/Navbar';
 import { LibraryView } from './components/LibraryView';
 import { ReaderView } from './components/ReaderView';
@@ -42,6 +42,9 @@ export default function App() {
   // Cloud auto-pull progress (null = idle/done)
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
+  // Throttle cloud progress pushes: max 1 / 15s per novel, or on chapter change
+  const lastPushRef = useRef<Record<string, { t: number; ch: number }>>({});
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
@@ -51,9 +54,9 @@ export default function App() {
   useEffect(() => {
     const loadData = async () => {
       const storedNovels = await getAllNovels();
-      setNovels(storedNovels);
       const settings = getReaderSettings();
       setReaderSettings(settings);
+      let all = [...storedNovels];
       // Auto-pull cloud novels (D1) missing locally — same-origin API
       try {
         const pulled = await pullMissingNovels(
@@ -61,14 +64,30 @@ export default function App() {
           new Set(storedNovels.map(n => n.id)),
           (p) => setSyncStatus(`Đang tải "${p.novelTitle}": ${p.done}/${p.total} chương…`)
         );
-        if (pulled.length > 0) {
-          setNovels(prev => [...pulled, ...prev]);
-        }
+        all = [...pulled, ...all];
       } catch (e) {
         console.warn('Cloud pull failed', e);
-      } finally {
-        setSyncStatus(null);
       }
+      // Merge cloud reading positions — newer lastReadAt wins (multi-device)
+      try {
+        const base = window.location.origin;
+        for (const n of all) {
+          const cp = await fetchCloudProgress(base, n.id).catch(() => null);
+          if (cp && cp.lastReadAt && (!n.progress.lastReadAt || cp.lastReadAt > n.progress.lastReadAt)) {
+            n.progress = {
+              ...n.progress,
+              currentChapterIndex: cp.chapter,
+              scrollPercentage: cp.scroll,
+              lastReadAt: cp.lastReadAt
+            };
+            await saveNovel(n);
+          }
+        }
+      } catch (e) {
+        console.warn('Cloud progress merge failed', e);
+      }
+      setNovels(all);
+      setSyncStatus(null);
     };
     loadData();
   }, []);
@@ -127,6 +146,16 @@ export default function App() {
           updatedAt: new Date().toISOString()
         };
         saveNovel(updatedNovel);
+
+        // Push lightweight position to cloud (throttled) for multi-device resume
+        try {
+          const now = Date.now();
+          const prev = lastPushRef.current[novelId];
+          if (!prev || prev.ch !== chapterIndex || now - prev.t > 15000) {
+            lastPushRef.current[novelId] = { t: now, ch: chapterIndex };
+            pushProgressToCloud(window.location.origin, novelId, chapterIndex, scrollPercent).catch(() => {});
+          }
+        } catch {}
 
         // Auto sync with remote Cloudflare worker if configured
         if (cloudflareConfig.syncEnabled && cloudflareConfig.apiEndpoint) {

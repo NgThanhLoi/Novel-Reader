@@ -19,7 +19,8 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   showProgressBar: true,
   speechRate: 1.0,
   speechPitch: 1.0,
-  speechVoiceName: ''
+  speechVoiceName: '',
+  keepAwake: true
 };
 
 export const DEFAULT_CF_CONFIG: CloudflareConfig = {
