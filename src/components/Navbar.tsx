@@ -66,7 +66,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="font-bold text-lg tracking-tight block leading-tight">
                 Thư Viện Sách
               </span>
-              <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400 block tracking-wider uppercase">
+              <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400 hidden min-[420px]:block tracking-wider uppercase">
                 Cloudflare Serverless
               </span>
             </div>
@@ -128,7 +128,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             id="nav-stats-btn"
             onClick={onOpenStats}
             title="Thống kê đọc sách"
-            className={`p-2 rounded-lg transition-colors border ${
+            className={`p-2 rounded-lg transition-colors border hidden sm:block ${
               isDark 
                 ? 'border-neutral-800 hover:bg-neutral-800 text-neutral-300' 
                 : 'border-neutral-200 hover:bg-neutral-100 text-neutral-600'
@@ -142,7 +142,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             id="nav-cloudflare-btn"
             onClick={onOpenCloudflare}
             title="Kiến trúc Cloudflare Serverless (D1 + KV + R2)"
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
               isDark
                 ? 'bg-amber-950/30 border-amber-800/60 text-amber-300 hover:bg-amber-900/40'
                 : 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100/80'
@@ -170,10 +170,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             id="nav-upload-novel-btn"
             onClick={onOpenUpload}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs sm:text-sm font-semibold rounded-lg bg-amber-600 hover:bg-amber-700 text-white shadow-sm transition-transform active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 text-xs sm:text-sm font-semibold rounded-lg bg-amber-600 hover:bg-amber-700 text-white shadow-sm transition-transform active:scale-95 cursor-pointer"
           >
             <UploadCloud className="w-4 h-4" />
-            <span>Thêm truyện</span>
+            <span className="hidden sm:inline">Thêm truyện</span>
           </button>
         </div>
       </div>
