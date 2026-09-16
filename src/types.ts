@@ -48,7 +48,7 @@ export interface Novel {
   r2StorageKey?: string;
 }
 
-export type ReaderTheme = 'light' | 'sepia' | 'dark' | 'oled' | 'nord' | 'emerald';
+export type ReaderTheme = 'light' | 'sepia' | 'dark' | 'oled' | 'nord' | 'emerald' | 'custom';
 
 export type ReaderFontFamily = 'literata' | 'merriweather' | 'vietnam' | 'nunito' | 'mono';
 
@@ -61,6 +61,8 @@ export interface ReaderSettings {
   textAlign: 'left' | 'justify';
   contentWidth: ReaderContentWidth;
   theme: ReaderTheme;
+  customBg: string; // hex for 'custom' theme
+  customFg: string;
   autoScroll: boolean;
   autoScrollSpeed: number; // 1 to 10
   showProgressBar: boolean;

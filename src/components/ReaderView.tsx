@@ -115,8 +115,21 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       header: 'bg-[#142822]/90 text-[#e6f4ea] border-[#1e3b33]',
       border: 'border-[#1e3b33]',
       accent: 'text-emerald-400'
+    },
+    custom: {
+      bg: '',
+      text: '',
+      header: 'backdrop-blur-md',
+      border: 'border-current/20',
+      accent: 'text-amber-500'
     }
   };
+
+  const isCustomTheme = settings.theme === 'custom';
+  const customBg = settings.customBg || '#1e2229';
+  const customFg = settings.customFg || '#d8dee9';
+  const rootStyle = isCustomTheme ? { backgroundColor: customBg, color: customFg } : undefined;
+  const headerStyle = isCustomTheme ? { backgroundColor: customBg + 'e6', color: customFg, borderColor: customFg + '33' } : undefined;
 
   const currentThemeStyle = themeClasses[settings.theme] || themeClasses.light;
 
@@ -298,11 +311,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     <div 
       id="reader-view-root"
       ref={containerRef}
+      style={rootStyle}
       className={`min-h-screen transition-colors duration-300 ${currentThemeStyle.bg} ${currentThemeStyle.text}`}
     >
       {/* Floating Reader Header */}
       <header
         id="reader-top-header"
+        style={headerStyle}
         className={`fixed top-0 inset-x-0 z-40 transition-transform duration-300 border-b backdrop-blur-md ${
           currentThemeStyle.header
         } ${isHeaderVisible ? 'translate-y-0' : '-translate-y-full'}`}
@@ -569,7 +584,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   { id: 'dark', name: 'Đêm', bg: 'bg-[#18181b] text-neutral-200 border-[#333]' },
                   { id: 'oled', name: 'AMOLED', bg: 'bg-black text-white border-neutral-800' },
                   { id: 'nord', name: 'Phiến đá', bg: 'bg-[#242933] text-neutral-200 border-[#3b4252]' },
-                  { id: 'emerald', name: 'Xanh dịu', bg: 'bg-[#0f1f1a] text-[#d1e7dd] border-[#1e3b33]' }
+                  { id: 'emerald', name: 'Xanh dịu', bg: 'bg-[#0f1f1a] text-[#d1e7dd] border-[#1e3b33]' },
+                  { id: 'custom', name: 'Tùy chọn', bg: 'bg-neutral-500/20 text-current border-dashed' }
                 ].map(t => (
                   <button
                     key={t.id}
@@ -586,6 +602,29 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               </div>
             </div>
 
+            {/* 1b. Custom colors (doc-reader parity) */}
+            {settings.theme === 'custom' && (
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 font-semibold opacity-75">
+                  Nền
+                  <input
+                    type="color"
+                    value={customBg}
+                    onChange={(e) => onUpdateSettings({ customBg: e.target.value })}
+                    className="w-9 h-7 rounded cursor-pointer bg-transparent"
+                  />
+                </label>
+                <label className="flex items-center gap-2 font-semibold opacity-75">
+                  Chữ
+                  <input
+                    type="color"
+                    value={customFg}
+                    onChange={(e) => onUpdateSettings({ customFg: e.target.value })}
+                    className="w-9 h-7 rounded cursor-pointer bg-transparent"
+                  />
+                </label>
+              </div>
+            )}
             {/* 2. Font Size Control */}
             <div>
               <div className="flex justify-between items-center mb-1.5">
@@ -643,25 +682,19 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               </div>
             </div>
 
-            {/* 4. Line Spacing & Width */}
+            {/* 4. Line Spacing (slider, doc-reader parity) */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block font-semibold opacity-75 mb-1.5">Giãn dòng:</label>
-                <div className="flex gap-1">
-                  {[1.5, 1.8, 2.1].map(spacing => (
-                    <button
-                      key={spacing}
-                      onClick={() => onUpdateSettings({ lineHeight: spacing })}
-                      className={`flex-1 py-1 text-center rounded border transition-colors ${
-                        settings.lineHeight === spacing
-                          ? 'bg-amber-500 text-white border-amber-500 font-bold'
-                          : 'border-current/20 opacity-75'
-                      }`}
-                    >
-                      {spacing}
-                    </button>
-                  ))}
-                </div>
+                <label className="block font-semibold opacity-75 mb-1.5">Giãn dòng: {Number(settings.lineHeight).toFixed(1)}</label>
+                <input
+                  type="range"
+                  min="1.4"
+                  max="2.6"
+                  step="0.1"
+                  value={settings.lineHeight}
+                  onChange={(e) => onUpdateSettings({ lineHeight: parseFloat(e.target.value) })}
+                  className="w-full accent-amber-500 cursor-pointer"
+                />
               </div>
 
               <div>

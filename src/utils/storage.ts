@@ -13,6 +13,8 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   textAlign: 'left',
   contentWidth: 'medium',
   theme: 'light',
+  customBg: '#1e2229',
+  customFg: '#d8dee9',
   autoScroll: false,
   autoScrollSpeed: 3,
   showProgressBar: true,
