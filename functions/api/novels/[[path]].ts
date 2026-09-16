@@ -106,6 +106,26 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
       return new Response(JSON.stringify({ error: 'Database D1 chưa được cấu hình' }), { status: 500, headers });
     }
 
+    // 2b. GET /api/novels/:id/export?offset&limit -> Bulk chương KÈM content (cho client sync)
+    const exportMatch = path.match(/^([a-zA-Z0-9_-]+)\/export$/);
+    if (request.method === 'GET' && exportMatch) {
+      const novelId = exportMatch[1];
+      const url = new URL(request.url);
+      const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10) || 0);
+      const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '100', 10) || 100));
+      if (env.DB) {
+        const novel = await env.DB.prepare('SELECT *, (SELECT COUNT(*) FROM chapters c WHERE c.novel_id = n.id) as chapter_count FROM novels n WHERE id = ?').bind(novelId).first() as any;
+        if (!novel) {
+          return new Response(JSON.stringify({ error: 'Không tìm thấy truyện' }), { status: 404, headers });
+        }
+        const { results: chapters } = await env.DB.prepare(
+          'SELECT id, chapter_index, title, content, word_count FROM chapters WHERE novel_id = ? ORDER BY chapter_index ASC LIMIT ? OFFSET ?'
+        ).bind(novelId, limit, offset).all();
+        return new Response(JSON.stringify({ success: true, data: { novel, chapters, offset, limit } }), { headers });
+      }
+      return new Response(JSON.stringify({ error: 'Database D1 chưa được cấu hình' }), { status: 500, headers });
+    }
+
     // 3. GET /api/novels/:id/chapter/:idx -> Lấy nội dung chương (Edge Cached KV)
     const chapterMatch = path.match(/^([a-zA-Z0-9_-]+)\/chapter\/(\d+)$/);
     if (request.method === 'GET' && chapterMatch) {

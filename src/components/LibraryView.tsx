@@ -22,6 +22,7 @@ interface LibraryViewProps {
   onDeleteNovel: (id: string) => void;
   onOpenUpload: () => void;
   isDark: boolean;
+  syncStatus?: string | null;
 }
 
 export const LibraryView: React.FC<LibraryViewProps> = ({
@@ -32,7 +33,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onToggleFavorite,
   onDeleteNovel,
   onOpenUpload,
-  isDark
+  isDark,
+  syncStatus
 }) => {
   const [statusFilter, setStatusFilter] = useState<'all' | NovelStatus>('all');
   const [formatFilter, setFormatFilter] = useState<'all' | NovelFormat>('all');
@@ -217,7 +219,14 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
           <div className="w-14 h-14 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto mb-4">
             <Compass className="w-7 h-7" />
           </div>
-          <h3 className="text-base font-bold mb-1">Không tìm thấy tác phẩm nào</h3>
+          <h3 className="text-base font-bold mb-1">
+            {syncStatus ? 'Đang đồng bộ thư viện…' : 'Không tìm thấy tác phẩm nào'}
+          </h3>
+          {syncStatus && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold mb-4 animate-pulse">
+              {syncStatus}
+            </p>
+          )}
           <p className="text-xs text-neutral-500 max-w-md mx-auto mb-6">
             {searchQuery 
               ? `Không có kết quả nào khớp với "${searchQuery}". Vui lòng thử từ khóa khác.`

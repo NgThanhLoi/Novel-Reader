@@ -11,6 +11,7 @@ import {
   DEFAULT_SETTINGS
 } from './utils/storage';
 import { syncNovelToCloudflare } from './utils/cloudflareSync';
+import { pullMissingNovels } from './utils/cloudPull';
 import { Navbar } from './components/Navbar';
 import { LibraryView } from './components/LibraryView';
 import { ReaderView } from './components/ReaderView';
@@ -38,6 +39,9 @@ export default function App() {
   // Notification toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Cloud auto-pull progress (null = idle/done)
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
@@ -50,6 +54,21 @@ export default function App() {
       setNovels(storedNovels);
       const settings = getReaderSettings();
       setReaderSettings(settings);
+      // Auto-pull cloud novels (D1) missing locally — same-origin API
+      try {
+        const pulled = await pullMissingNovels(
+          window.location.origin,
+          new Set(storedNovels.map(n => n.id)),
+          (p) => setSyncStatus(`Đang tải "${p.novelTitle}": ${p.done}/${p.total} chương…`)
+        );
+        if (pulled.length > 0) {
+          setNovels(prev => [...pulled, ...prev]);
+        }
+      } catch (e) {
+        console.warn('Cloud pull failed', e);
+      } finally {
+        setSyncStatus(null);
+      }
     };
     loadData();
   }, []);
@@ -261,6 +280,7 @@ export default function App() {
           onDeleteNovel={handleDeleteNovel}
           onOpenUpload={() => setIsUploadOpen(true)}
           isDark={isDark}
+          syncStatus={syncStatus}
         />
       )}
 
