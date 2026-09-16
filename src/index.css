@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .font-literata {
+    font-family: 'Literata', Georgia, serif;
+  }
+  .font-merriweather {
+    font-family: 'Merriweather', Cambria, Georgia, serif;
+  }
+  .font-vietnam {
+    font-family: 'Be Vietnam Pro', system-ui, -apple-system, sans-serif;
+  }
+  .font-nunito {
+    font-family: 'Nunito', system-ui, sans-serif;
+  }
+}
+
+/* Custom smooth scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(150, 150, 150, 0.35);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(150, 150, 150, 0.55);
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

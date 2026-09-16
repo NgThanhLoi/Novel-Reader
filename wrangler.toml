@@ -1,0 +1,25 @@
+# wrangler.toml
+# Cấu hình Cloudflare Pages / Workers Full-Stack
+name = "novel-reader-app"
+compatibility_date = "2024-09-01"
+pages_build_output_dir = "dist"
+
+# 1. Cloudflare D1 Database Binding
+# Tạo database bằng lệnh: npx wrangler d1 create novel-library-d1
+# Sau đó thay database_id bên dưới:
+[[d1_databases]]
+binding = "DB"
+database_name = "novel-library-d1"
+database_id = "your-d1-database-uuid-here"
+
+# 2. Cloudflare Workers KV Binding (Bộ nhớ đệm siêu tốc cho chương & danh mục)
+# Tạo KV bằng lệnh: npx wrangler kv:namespace create NOVEL_CACHE
+[[kv_namespaces]]
+binding = "NOVEL_CACHE"
+id = "your-kv-namespace-id-here"
+
+# 3. Cloudflare R2 Storage Binding (Lưu trữ tệp .epub, .mobi và ảnh bìa gốc)
+# Tạo R2 bucket bằng lệnh: npx wrangler r2 bucket create novel-storage-r2
+[[r2_buckets]]
+binding = "NOVEL_BUCKET"
+bucket_name = "novel-storage-r2"

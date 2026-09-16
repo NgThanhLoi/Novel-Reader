@@ -1,0 +1,6 @@
+{
+  "name": "Trình Đọc Truyện & Quản Lý Thư Viện",
+  "description": "Website đọc và quản lý truyện thông minh hỗ trợ tải lên file JSON, EPUB, MOBI, chế độ đọc đêm, tùy chỉnh cỡ chữ và kiến trúc Cloudflare serverless.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
