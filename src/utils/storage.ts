@@ -1,8 +1,7 @@
 import { Novel, ReaderSettings, CloudflareConfig } from '../types';
-import { SAMPLE_NOVELS } from '../data/sampleNovels';
 
 const DB_NAME = 'novel_reader_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NOVELS = 'novels';
 const STORE_SETTINGS = 'settings';
 
@@ -47,6 +46,10 @@ function openDB(): Promise<IDBDatabase> {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NOVELS)) {
         db.createObjectStore(STORE_NOVELS, { keyPath: 'id' });
+      } else {
+        // v2: wipe legacy store (removes built-in sample novels)
+        const tx = (request as any).transaction as IDBTransaction;
+        tx.objectStore(STORE_NOVELS).clear();
       }
       if (!db.objectStoreNames.contains(STORE_SETTINGS)) {
         db.createObjectStore(STORE_SETTINGS);
@@ -68,12 +71,7 @@ export async function getAllNovels(): Promise<Novel[]> {
       const req = store.getAll();
 
       req.onsuccess = () => {
-        let results = req.result as Novel[];
-        if (!results || results.length === 0) {
-          // Initialize with sample novels if empty
-          saveInitialSamples(SAMPLE_NOVELS);
-          results = SAMPLE_NOVELS;
-        }
+        const results = ((req.result as Novel[]) || []).filter(n => !n.id.startsWith('sample-'));
         resolve(results);
       };
       req.onerror = () => {
@@ -91,26 +89,13 @@ function loadFromLocalStorageFallback(): Novel[] {
   try {
     const stored = localStorage.getItem('novel_reader_novels');
     if (stored) {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored) as Novel[];
+      return Array.isArray(parsed) ? parsed.filter(n => !n.id.startsWith('sample-')) : [];
     }
   } catch (e) {
     console.error(e);
   }
-  return SAMPLE_NOVELS;
-}
-
-// Save initial sample books
-async function saveInitialSamples(samples: Novel[]) {
-  try {
-    const db = await openDB();
-    const tx = db.transaction(STORE_NOVELS, 'readwrite');
-    const store = tx.objectStore(STORE_NOVELS);
-    samples.forEach(s => store.put(s));
-  } catch (e) {
-    try {
-      localStorage.setItem('novel_reader_novels', JSON.stringify(samples));
-    } catch {}
-  }
+  return [] as Novel[];
 }
 
 // Save or update a novel
