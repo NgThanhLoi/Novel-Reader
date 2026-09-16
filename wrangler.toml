@@ -10,16 +10,16 @@ pages_build_output_dir = "dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "novel-library-d1"
-database_id = "your-d1-database-uuid-here"
+database_id = "410c4b7a-9f71-489b-a0a6-325669ff8745"
 
 # 2. Cloudflare Workers KV Binding (Bộ nhớ đệm siêu tốc cho chương & danh mục)
 # Tạo KV bằng lệnh: npx wrangler kv:namespace create NOVEL_CACHE
 [[kv_namespaces]]
 binding = "NOVEL_CACHE"
-id = "your-kv-namespace-id-here"
+id = "33a6ffc9b97947f0873ed2e70ce56de9"
 
-# 3. Cloudflare R2 Storage Binding (Lưu trữ tệp .epub, .mobi và ảnh bìa gốc)
-# Tạo R2 bucket bằng lệnh: npx wrangler r2 bucket create novel-storage-r2
-[[r2_buckets]]
-binding = "NOVEL_BUCKET"
-bucket_name = "novel-storage-r2"
+# 3. Backblaze B2 file store (qua S3-compatible API, xem functions/api/files/[[path]].ts)
+# Secrets (không commit): npx wrangler pages secret put B2_KEY_ID / B2_APP_KEY --project-name=novel-reader-app
+[vars]
+B2_BUCKET = "novel-reader"
+B2_ENDPOINT = "https://s3.us-east-005.backblazeb2.com"
