@@ -72,7 +72,7 @@ export const BookCard: React.FC<BookCardProps> = ({
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           />
         ) : (
-          <div className={`w-full h-full bg-gradient-to-br ${getCoverGradient(novel.title)} p-6 flex flex-col justify-between text-white relative`}>
+          <div className={`w-full h-full bg-gradient-to-br ${getCoverGradient(novel.title)} px-6 pb-6 pt-12 flex flex-col justify-between text-white relative`}>
             {/* Book spine line styling */}
             <div className="absolute left-3 top-0 bottom-0 w-1 bg-white/20 blur-[0.5px]"></div>
             
