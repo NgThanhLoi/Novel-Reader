@@ -42,7 +42,8 @@ export default function App() {
   // Cloud auto-pull progress (null = idle/done)
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
-  // Throttle cloud progress pushes: max 1 / 15s per novel, or on chapter change
+  // Throttle cloud progress pushes: max 1 / 60s per novel, or on chapter change
+  // (KV free tier chỉ 1.000 write/delete/ngày — không push dày)
   const lastPushRef = useRef<Record<string, { t: number; ch: number }>>({});
 
   const showToast = (msg: string) => {
@@ -151,7 +152,7 @@ export default function App() {
         try {
           const now = Date.now();
           const prev = lastPushRef.current[novelId];
-          if (!prev || prev.ch !== chapterIndex || now - prev.t > 15000) {
+          if (!prev || prev.ch !== chapterIndex || now - prev.t > 60000) {
             lastPushRef.current[novelId] = { t: now, ch: chapterIndex };
             pushProgressToCloud(window.location.origin, novelId, chapterIndex, scrollPercent).catch(() => {});
           }

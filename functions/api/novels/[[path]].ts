@@ -36,6 +36,17 @@ interface PagesFunctionContext<E = Env> {
   params: { path?: string | string[] };
 }
 
+// KV là cache tối ưu, không phải điểm chết: mọi thao tác KV lỗi (hết quota 429,
+// binding thiếu) đều fallback về D1 thay vì 500. Đặc biệt KHÔNG delete/put KV
+// trong endpoint gọi dày (progress push) — free tier chỉ 1.000 write/delete/ngày.
+const kvSafe = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+  try {
+    return await fn();
+  } catch (e: any) {
+    return fallback;
+  }
+};
+
 export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Response> => {
   const { request, env, params } = context;
   const pathParts = Array.isArray(params.path) ? params.path : params.path ? [params.path] : [];
@@ -57,11 +68,9 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
     // 1. GET /api/novels -> Danh sách tất cả truyện
     if (request.method === 'GET' && (!path || path === '')) {
       const cacheKey = 'cache:novels:list';
-      if (env.NOVEL_CACHE) {
-        const cached = await env.NOVEL_CACHE.get(cacheKey);
-        if (cached) {
-          return new Response(cached, { headers });
-        }
+      const cached = await kvSafe(() => env.NOVEL_CACHE.get(cacheKey), null);
+      if (cached) {
+        return new Response(cached, { headers });
       }
 
       if (env.DB) {
@@ -76,9 +85,8 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
         const { results } = await env.DB.prepare(query).all();
         const payload = JSON.stringify({ success: true, data: results });
         
-        if (env.NOVEL_CACHE) {
-          await env.NOVEL_CACHE.put(cacheKey, payload, { expirationTtl: 60 });
-        }
+        // Fire-and-forget: lỗi KV không chặn response. TTL 60s tự expire.
+        kvSafe(() => env.NOVEL_CACHE.put(cacheKey, payload, { expirationTtl: 60 }), undefined);
         return new Response(payload, { headers });
       }
 
@@ -133,11 +141,9 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
       const chapterIdx = parseInt(chapterIdxStr, 10);
       const kvKey = `chapter:${novelId}:${chapterIdx}`;
 
-      if (env.NOVEL_CACHE) {
-        const cachedChapter = await env.NOVEL_CACHE.get(kvKey);
-        if (cachedChapter) {
-          return new Response(cachedChapter, { headers });
-        }
+      const cachedChapter = await kvSafe(() => env.NOVEL_CACHE.get(kvKey), null);
+      if (cachedChapter) {
+        return new Response(cachedChapter, { headers });
       }
 
       if (env.DB) {
@@ -150,9 +156,8 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
         }
 
         const respPayload = JSON.stringify({ success: true, data: chapter });
-        if (env.NOVEL_CACHE) {
-          await env.NOVEL_CACHE.put(kvKey, respPayload, { expirationTtl: 86400 * 7 });
-        }
+        // Lazy cache: chỉ chương thật sự được đọc mới ghi (1 write/lượt đọc).
+        kvSafe(() => env.NOVEL_CACHE.put(kvKey, respPayload, { expirationTtl: 86400 * 7 }), undefined);
         return new Response(respPayload, { headers });
       }
     }
@@ -190,22 +195,14 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
               INSERT OR REPLACE INTO chapters (id, novel_id, chapter_index, title, content, word_count)
               VALUES (?, ?, ?, ?, ?, ?)
             `).bind(ch.id, novel.id, ch.chapterIndex, ch.title, ch.content, ch.wordCount || 0).run();
-
-            if (env.NOVEL_CACHE) {
-              await env.NOVEL_CACHE.put(
-                `chapter:${novel.id}:${ch.chapterIndex}`,
-                JSON.stringify({ success: true, data: ch }),
-                { expirationTtl: 86400 * 7 }
-              );
-            }
           }
         }
 
-        if (env.NOVEL_CACHE) {
-          await env.NOVEL_CACHE.delete('cache:novels:list');
-        }
+        // KHÔNG warm KV từng chương ở đây (1 truyện 500 chương = 500 write,
+        // free tier chỉ 1.000/ngày). Chapter tự cache lazy ở GET /chapter/:idx.
+        // KHÔNG delete cache list ở đây — TTL 60s tự expire.
 
-        return new Response(JSON.stringify({ success: true, message: 'Đã lưu vào Cloudflare D1 & KV' }), { headers });
+        return new Response(JSON.stringify({ success: true, message: 'Đã lưu vào Cloudflare D1' }), { headers });
       }
 
       return new Response(JSON.stringify({ error: 'Database D1 chưa được cấu hình' }), { status: 500, headers });
@@ -227,9 +224,8 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
             time_spent_seconds = time_spent_seconds + excluded.time_spent_seconds
         `).bind(novelId, currentChapterIndex, scrollPercentage, now, timeSpentSeconds || 0).run();
 
-        if (env.NOVEL_CACHE) {
-          await env.NOVEL_CACHE.delete('cache:novels:list');
-        }
+        // KHÔNG delete cache list ở đây — client push mỗi 15-60s, mỗi push 1 delete
+        // là cách đốt sạch quota 1.000 delete/ngày. Sort last_read lag tối đa 60s (TTL).
         return new Response(JSON.stringify({ success: true, updatedAt: now }), { headers });
       }
     }
