@@ -11,7 +11,7 @@ import {
   DEFAULT_SETTINGS
 } from './utils/storage';
 import { syncNovelToCloudflare } from './utils/cloudflareSync';
-import { deleteBilingual, getMeta } from './utils/bilingual';
+import { buildNovelChapters, deleteBilingual, getMeta, packEvents } from './utils/bilingual';
 import { pullMissingNovels, pushProgressToCloud, fetchCloudProgress } from './utils/cloudPull';
 import { Navbar } from './components/Navbar';
 import { LibraryView } from './components/LibraryView';
@@ -93,6 +93,29 @@ export default function App() {
       setSyncStatus(null);
     };
     loadData();
+  }, []);
+
+  // Gói song ngữ vừa tải về (bản mới có thể thêm/bớt chương) -> dựng lại danh sách chương
+  useEffect(() => {
+    const onPack = async (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      const chapters = await buildNovelChapters(id).catch(() => null);
+      if (!chapters || !chapters.length) return;
+      setNovels(prev => prev.map(n => {
+        if (n.id !== id) return n;
+        const idx = Math.min(n.progress.currentChapterIndex, chapters.length - 1);
+        const updated: Novel = {
+          ...n,
+          chapters,
+          totalWords: chapters.reduce((s, c) => s + c.wordCount, 0),
+          progress: { ...n.progress, currentChapterIndex: idx }
+        };
+        saveNovel(updated);
+        return updated;
+      }));
+    };
+    packEvents.addEventListener('updated', onPack);
+    return () => packEvents.removeEventListener('updated', onPack);
   }, []);
 
   // Sync document class for dark mode

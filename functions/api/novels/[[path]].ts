@@ -201,7 +201,7 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
     // 4. POST /api/novels -> Lưu hoặc đồng bộ truyện và các chương vào D1 + KV
     if (request.method === 'POST' && (!path || path === '')) {
       const body = await request.json() as any;
-      const { novel } = body;
+      const { novel, truncateFrom } = body;
       if (!novel || !novel.id) {
         return new Response(JSON.stringify({ error: 'Dữ liệu truyện không hợp lệ' }), { status: 400, headers });
       }
@@ -232,6 +232,12 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
               VALUES (?, ?, ?, ?, ?, ?)
             `).bind(ch.id, novel.id, ch.chapterIndex, ch.title, ch.content, ch.wordCount || 0).run();
           }
+        }
+
+        // Bản mới ít chương hơn (vd. gói song ngữ bỏ chương trùng) -> xóa chương thừa
+        if (typeof truncateFrom === 'number' && truncateFrom >= 0) {
+          await env.DB.prepare('DELETE FROM chapters WHERE novel_id = ? AND chapter_index >= ?')
+            .bind(novel.id, Math.floor(truncateFrom)).run();
         }
 
         // KHÔNG warm KV từng chương ở đây (1 truyện 500 chương = 500 write,

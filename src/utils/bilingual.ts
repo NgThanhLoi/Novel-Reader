@@ -19,6 +19,7 @@ interface Pack {
   marker: string;
   keys: string[];
   vals: string[];
+  fixes?: Record<string, string>;
   hv: Record<string, string>;
   chapters: PackChapter[];
 }
@@ -128,7 +129,8 @@ async function storePack(pack: Pack): Promise<BiMeta> {
     chapterCount: pack.chapters.length,
     importedAt: new Date().toISOString(),
     version: pack.version,
-    titles: pack.chapters.map(c => c.t)
+    titles: pack.chapters.map(c => c.t),
+    fixes: pack.fixes || {}
   };
   const d = await db();
   await new Promise<void>((resolve, reject) => {
@@ -198,14 +200,19 @@ export async function importPackFile(file: File, onStatus?: (s: string) => void)
   };
 }
 
-async function remoteVersion(novelId: string): Promise<string | null> {
+interface RemoteManifest {
+  version?: string;
+  parts?: number; // gói chia nhiều phần (mạng yếu tải 1 file 20MB hay đứt)
+}
+
+async function remoteManifest(novelId: string): Promise<RemoteManifest | null> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 5000);
   try {
     const r = await fetch(versionUrl(novelId), { signal: ctl.signal, cache: 'no-store' });
     if (!r.ok) return null;
     const j = await r.json();
-    return typeof j?.version === 'string' ? j.version : null;
+    return j && typeof j === 'object' ? (j as RemoteManifest) : null;
   } catch {
     return null;
   } finally {
@@ -213,13 +220,59 @@ async function remoteVersion(novelId: string): Promise<string | null> {
   }
 }
 
-async function downloadPack(novelId: string, onStatus?: (s: string) => void): Promise<BiMeta | null> {
-  const r = await fetch(packUrl(novelId), { cache: 'no-store' });
-  if (!r.ok) return null;
-  onStatus?.('Đang tải gói song ngữ từ cloud…');
-  const pack = await readPackBlob(await r.blob(), true);
+async function fetchBlob(url: string, tries = 3): Promise<Blob> {
+  let err: unknown;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(url, { cache: 'no-store' });
+      if (r.ok) return await r.blob();
+      err = new Error(`HTTP ${r.status}`);
+    } catch (e) {
+      err = e;
+    }
+    await new Promise(res => setTimeout(res, 1500 * (i + 1)));
+  }
+  throw err;
+}
+
+/** báo cho App biết gói vừa tải về (lần đầu hoặc bản mới) -> cập nhật danh sách chương */
+export const packEvents = new EventTarget();
+
+async function downloadPack(novelId: string, manifest: RemoteManifest | null, onStatus?: (s: string) => void): Promise<BiMeta | null> {
+  let blob: Blob;
+  if (manifest?.parts && manifest.parts > 0) {
+    const parts: Blob[] = [];
+    for (let i = 0; i < manifest.parts; i++) {
+      onStatus?.(`Đang tải gói song ngữ từ cloud (${i + 1}/${manifest.parts})…`);
+      parts.push(await fetchBlob(`/api/files/packs/${encodeURIComponent(novelId)}.nrpack.part${i}`));
+    }
+    blob = new Blob(parts);
+  } else {
+    onStatus?.('Đang tải gói song ngữ từ cloud…');
+    const r = await fetch(packUrl(novelId), { cache: 'no-store' });
+    if (!r.ok) return null;
+    blob = await r.blob();
+  }
+  const pack = await readPackBlob(blob, true);
   if (pack.novel.id !== novelId) return null;
-  return storePack(pack);
+  const meta = await storePack(pack);
+  packEvents.dispatchEvent(new CustomEvent('updated', { detail: novelId }));
+  return meta;
+}
+
+/** dựng lại danh sách chương (nội dung chữ, tiêu đề) của truyện từ gói đã lưu */
+export async function buildNovelChapters(novelId: string): Promise<Chapter[] | null> {
+  const meta = await getMeta(novelId);
+  if (!meta) return null;
+  const engine = new NameEngine(meta, await getNames(novelId));
+  const out: Chapter[] = [];
+  for (let i = 0; i < meta.chapterCount; i++) {
+    const c = await getChapter(novelId, i);
+    if (!c) return null;
+    const content = c.p.map(p => engine.plain(p, meta.keys)).join('\n\n');
+    out.push({ id: `${novelId}-ch${i}`, chapterIndex: i, title: engine.plain(c.t, meta.keys), content, wordCount: content.split(/\s+/).length });
+  }
+  return out;
 }
 
 const checked = new Set<string>();
@@ -230,9 +283,11 @@ export async function ensurePack(novelId: string, onStatus?: (s: string) => void
   if (checked.has(novelId)) return m || null;
   checked.add(novelId);
   try {
-    if (!m) return await downloadPack(novelId, onStatus);
-    const v = await remoteVersion(novelId);
-    if (v && v !== m.version) return (await downloadPack(novelId, onStatus)) || m;
+    const manifest = await remoteManifest(novelId);
+    if (!m) return await downloadPack(novelId, manifest, onStatus);
+    if (manifest?.version && manifest.version !== m.version) {
+      return (await downloadPack(novelId, manifest, onStatus)) || m;
+    }
     return m;
   } catch {
     return m || null;

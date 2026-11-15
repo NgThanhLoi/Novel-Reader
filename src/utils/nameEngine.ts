@@ -11,6 +11,7 @@ export interface BiMeta {
   chapterCount: number;
   importedAt: string;
   titles?: string[]; // tiêu đề chương (có mã) — cho mục lục
+  fixes?: Record<string, string>; // sửa tay: cụm Trung -> chữ Việt chèn thẳng trước khi dịch
   version?: string; // phiên bản gói (build_reader_pack.py) — khác bản trên cloud thì tải lại
 }
 
@@ -60,6 +61,7 @@ export function postprocess(s: string): string {
     .replace(/ +(?=[,.!?;:…」』】》）)])/g, '')
     .replace(/(?<=[「『【《（(]) +/g, '')
     .replace(SENT_START, (_m, a, b) => a + b.toUpperCase())
+    .replace(/^(Chương \d+: )([a-zà-ỹđ])/, (_m, a, b) => a + b.toUpperCase())
     .replace(/^[ \t　]+|[ \t　]+$/g, '');
 }
 
@@ -74,6 +76,7 @@ export class NameEngine {
   private first = new Map<string, number[]>();
   readonly dynKeys: string[] = []; // khóa làm đổi cách tách câu -> đoạn chứa nó phải dịch lại
   private markerRe: RegExp;
+  private fixes: Map<string, string>;
 
   constructor(meta: BiMeta, doc: NameDoc) {
     this.meta = meta;
@@ -89,8 +92,9 @@ export class NameEngine {
         this.active.set(k, e.v);
       }
     }
+    this.fixes = new Map(Object.entries(meta.fixes || {}));
     const lens = new Map<string, Set<number>>();
-    for (const k of this.active.keys()) {
+    for (const k of [...this.active.keys(), ...this.fixes.keys()]) {
       if (!lens.has(k[0])) lens.set(k[0], new Set());
       lens.get(k[0])!.add(k.length);
     }
@@ -139,12 +143,18 @@ export class NameEngine {
       if (lens) {
         for (const L of lens) {
           const k = s.slice(i, i + L);
-          if (this.active.has(k)) {
-            let id = idOf.get(k);
-            if (id === undefined) { id = keys.length; keys.push(k); idOf.set(k, id); }
-            let v = `${M}${id}${M}`;
-            if (isLatin(out.slice(-1))) v = ' ' + v;
-            if (i + L < n && isLatin(s[i + L])) v = v + ' ';
+          const fix = this.fixes.get(k);
+          if (fix !== undefined || this.active.has(k)) {
+            let v: string;
+            if (fix !== undefined) {
+              v = fix;
+            } else {
+              let id = idOf.get(k);
+              if (id === undefined) { id = keys.length; keys.push(k); idOf.set(k, id); }
+              v = `${M}${id}${M}`;
+            }
+            if (isLatin(out.slice(-1)) && isLatin(v.slice(0, 1))) v = ' ' + v;
+            if (i + L < n && isLatin(s[i + L]) && isLatin(v.slice(-1))) v = v + ' ';
             out += v;
             i += L;
             matched = true;
@@ -181,7 +191,7 @@ export class NameEngine {
       const k = keys[parseInt(m[1], 10)];
       let v = k !== undefined ? this.display(k) : m[0];
       // đầu dòng / sau mở ngoặc thoại -> viết hoa chữ đầu
-      if (v && /(^[\s　]*|[「『“])$/.test(acc)) v = v[0].toUpperCase() + v.slice(1);
+      if (v && /(^[\s　]*|[「『“]|^Chương \d+: )$/.test(acc)) v = v[0].toUpperCase() + v.slice(1);
       segs.push(k !== undefined ? { s: v, k } : { s: v });
       acc += v;
       last = m.index + m[0].length;
