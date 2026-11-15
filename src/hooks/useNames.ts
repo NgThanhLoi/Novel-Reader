@@ -148,8 +148,15 @@ export function useNames(novelId: string, chapterIdx: number) {
     setNames({ [zh]: i >= 0 ? meta.vals[i] : null });
   }, [meta, setNames]);
 
+  /** tiêu đề chương i theo bộ name hiện tại (null nếu gói không có) */
+  const tocTitle = useCallback((i: number): string | null => {
+    const t = meta?.titles?.[i];
+    return engine && t !== undefined ? engine.plain(t, meta!.keys) : null;
+  }, [engine, meta]);
+
   return {
     ready: !!view,
+    tocTitle,
     engine,
     meta,
     doc,

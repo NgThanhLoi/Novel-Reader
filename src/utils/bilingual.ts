@@ -14,6 +14,7 @@ export interface PackChapter {
 
 interface Pack {
   format: string;
+  version?: string;
   novel: { id: string; title: string; author: string; description: string; genres: string[] };
   marker: string;
   keys: string[];
@@ -125,7 +126,9 @@ async function storePack(pack: Pack): Promise<BiMeta> {
     vals: pack.vals,
     hv: pack.hv,
     chapterCount: pack.chapters.length,
-    importedAt: new Date().toISOString()
+    importedAt: new Date().toISOString(),
+    version: pack.version,
+    titles: pack.chapters.map(c => c.t)
   };
   const d = await db();
   await new Promise<void>((resolve, reject) => {
@@ -143,6 +146,7 @@ async function storePack(pack: Pack): Promise<BiMeta> {
 }
 
 const packUrl = (id: string) => `/api/files/packs/${encodeURIComponent(id)}.nrpack.json.gz`;
+const versionUrl = (id: string) => `/api/files/packs/${encodeURIComponent(id)}.version.json`;
 
 /** nhập gói từ file -> Novel (nội dung đã render bằng name mặc định) */
 export async function importPackFile(file: File, onStatus?: (s: string) => void): Promise<Novel> {
@@ -154,6 +158,14 @@ export async function importPackFile(file: File, onStatus?: (s: string) => void)
   // Đưa gói lên cloud (B2) để thiết bị khác tự tải — lỗi thì bỏ qua
   if (gz) {
     fetch(packUrl(pack.novel.id), { method: 'PUT', headers: { 'Content-Type': 'application/gzip' }, body: file })
+      .then(r => {
+        if (r.ok && pack.version) {
+          return fetch(versionUrl(pack.novel.id), {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ version: pack.version })
+          });
+        }
+      })
       .catch(() => {});
   }
   const engine = new NameEngine(meta, await getNames(meta.novelId));
@@ -186,22 +198,44 @@ export async function importPackFile(file: File, onStatus?: (s: string) => void)
   };
 }
 
-const triedRemote = new Set<string>();
-/** có dữ liệu song ngữ chưa? chưa thì thử tải gói từ cloud (một lần mỗi phiên) */
-export async function ensurePack(novelId: string, onStatus?: (s: string) => void): Promise<BiMeta | null> {
-  const m = await getMeta(novelId).catch(() => undefined);
-  if (m) return m;
-  if (triedRemote.has(novelId)) return null;
-  triedRemote.add(novelId);
+async function remoteVersion(novelId: string): Promise<string | null> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 5000);
   try {
-    const r = await fetch(packUrl(novelId));
+    const r = await fetch(versionUrl(novelId), { signal: ctl.signal, cache: 'no-store' });
     if (!r.ok) return null;
-    onStatus?.('Đang tải gói song ngữ từ cloud…');
-    const pack = await readPackBlob(await r.blob(), true);
-    if (pack.novel.id !== novelId) return null;
-    return await storePack(pack);
+    const j = await r.json();
+    return typeof j?.version === 'string' ? j.version : null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function downloadPack(novelId: string, onStatus?: (s: string) => void): Promise<BiMeta | null> {
+  const r = await fetch(packUrl(novelId), { cache: 'no-store' });
+  if (!r.ok) return null;
+  onStatus?.('Đang tải gói song ngữ từ cloud…');
+  const pack = await readPackBlob(await r.blob(), true);
+  if (pack.novel.id !== novelId) return null;
+  return storePack(pack);
+}
+
+const checked = new Set<string>();
+/** dữ liệu song ngữ của truyện: chưa có -> tải từ cloud; có rồi -> mỗi phiên kiểm tra
+ *  một lần, gói trên cloud mới hơn (build lại sau khi sửa glossary) thì tải lại */
+export async function ensurePack(novelId: string, onStatus?: (s: string) => void): Promise<BiMeta | null> {
+  const m = await getMeta(novelId).catch(() => undefined);
+  if (checked.has(novelId)) return m || null;
+  checked.add(novelId);
+  try {
+    if (!m) return await downloadPack(novelId, onStatus);
+    const v = await remoteVersion(novelId);
+    if (v && v !== m.version) return (await downloadPack(novelId, onStatus)) || m;
+    return m;
+  } catch {
+    return m || null;
   }
 }
 

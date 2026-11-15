@@ -10,6 +10,8 @@ export interface BiMeta {
   hv: Record<string, string>; // chữ -> Hán Việt
   chapterCount: number;
   importedAt: string;
+  titles?: string[]; // tiêu đề chương (có mã) — cho mục lục
+  version?: string; // phiên bản gói (build_reader_pack.py) — khác bản trên cloud thì tải lại
 }
 
 export interface NameEntry {

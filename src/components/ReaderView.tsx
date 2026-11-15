@@ -396,7 +396,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             </button>
             <div className="truncate">
               <h2 className="text-xs font-bold truncate leading-tight">{novel.title}</h2>
-              <p className="text-[11px] opacity-70 truncate">{currentChapter.title}</p>
+              <p className="text-[11px] opacity-70 truncate">{names.tocTitle(currentChapterIdx) ?? currentChapter.title}</p>
             </div>
           </div>
 
@@ -956,7 +956,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                         : 'hover:bg-current/5 opacity-80 hover:opacity-100'
                     }`}
                   >
-                    <span className="truncate pr-2">{ch.title}</span>
+                    <span className="truncate pr-2">{names.tocTitle(ch.chapterIndex) ?? ch.title}</span>
                     <span className="text-[10px] opacity-60 shrink-0">{ch.wordCount.toLocaleString()} từ</span>
                   </button>
                 );
