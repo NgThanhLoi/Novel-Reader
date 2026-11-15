@@ -87,3 +87,17 @@ npm run dev
 # Hoặc chạy mô phỏng toàn bộ Cloudflare Pages + Functions + D1 cục bộ:
 npx wrangler pages dev dist
 ```
+
+---
+
+## 4. Đổi name realtime (gói song ngữ `.nrpack.json.gz`)
+
+Giống sangtacviet: chạm vào tên trong truyện để sửa, cả bộ đổi ngay không cần dịch lại.
+
+- **Tạo gói**: `python3 build_reader_pack.py` (thư mục HGTT) — dịch qua API sangtacviet nhưng thay mỗi name trong glossary bằng mã `JQ<id>JQ`, lưu kèm câu gốc tiếng Trung từng đoạn.
+- **Nhập**: Tải truyện lên → chọn file `.nrpack.json.gz`. Gói được đẩy lên B2 (`/api/files/packs/…`) để thiết bị khác tự tải.
+- **Sửa name**: bật biểu tượng bút trên thanh đọc →
+  - chạm tên (gạch chân) → đổi tên / bỏ name / về mặc định;
+  - chạm đoạn văn → hiện câu gốc, chọn cụm chữ Trung → đặt name mới. Đoạn có name mới (hoặc name bị bỏ) được dịch lại qua API (`sangtacviet.com`, dự phòng `/api/translate`) và lưu cache.
+- **Danh sách name** (biểu tượng nhãn): xem / tìm / về mặc định, xuất `中文=Việt` để gộp vào `glossary_xuanjian.txt`, nhập nhiều name.
+- **Đồng bộ**: bộ name lưu IndexedDB + D1 (`/api/novels/:id/names`, bảng `novel_names` tự tạo), bản sửa mới hơn thắng.

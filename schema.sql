@@ -56,3 +56,10 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   created_at TEXT NOT NULL,
   FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE CASCADE
 );
+
+-- 5. Bảng Novel Names (bộ name người dùng cho đổi name realtime; API cũng tự tạo nếu thiếu)
+CREATE TABLE IF NOT EXISTS novel_names (
+  novel_id TEXT PRIMARY KEY,
+  data TEXT NOT NULL, -- JSON { entries: { "中文": { v: "Việt" | null, t: ms } }, updatedAt }
+  updated_at TEXT NOT NULL
+);

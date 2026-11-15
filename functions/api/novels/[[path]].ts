@@ -134,6 +134,42 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
       return new Response(JSON.stringify({ error: 'Database D1 chưa được cấu hình' }), { status: 500, headers });
     }
 
+    // 2c. GET/PUT /api/novels/:id/names -> Bộ name người dùng (đổi name realtime), đồng bộ đa thiết bị
+    //     data = { entries: { 中文: { v: string|null, t: ms } }, updatedAt }
+    const namesMatch = path.match(/^([a-zA-Z0-9_-]+)\/names$/);
+    if (namesMatch && (request.method === 'GET' || request.method === 'PUT')) {
+      const novelId = namesMatch[1];
+      if (!env.DB) {
+        return new Response(JSON.stringify({ error: 'Database D1 chưa được cấu hình' }), { status: 500, headers });
+      }
+      await env.DB.prepare(
+        'CREATE TABLE IF NOT EXISTS novel_names (novel_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL)'
+      ).run();
+      if (request.method === 'GET') {
+        const row = await env.DB.prepare('SELECT data, updated_at FROM novel_names WHERE novel_id = ?').bind(novelId).first() as any;
+        if (!row) return new Response(JSON.stringify({ error: 'Chưa có name' }), { status: 404, headers });
+        return new Response(JSON.stringify({ success: true, data: JSON.parse(row.data), updatedAt: row.updated_at }), { headers });
+      }
+      const body = await request.json() as any;
+      if (!body || typeof body.entries !== 'object') {
+        return new Response(JSON.stringify({ error: 'Dữ liệu name không hợp lệ' }), { status: 400, headers });
+      }
+      // gộp với bản trên server: mỗi name giữ bản sửa mới hơn
+      const cur = await env.DB.prepare('SELECT data FROM novel_names WHERE novel_id = ?').bind(novelId).first() as any;
+      const entries: Record<string, { v: string | null; t: number }> = cur ? (JSON.parse(cur.data).entries || {}) : {};
+      for (const [k, e] of Object.entries(body.entries as Record<string, { v: string | null; t: number }>)) {
+        if (!e || typeof e.t !== 'number' || (e.v !== null && typeof e.v !== 'string')) continue;
+        if (!entries[k] || e.t > entries[k].t) entries[k] = { v: e.v, t: e.t };
+      }
+      const now = new Date().toISOString();
+      const data = JSON.stringify({ entries, updatedAt: Date.now() });
+      await env.DB.prepare(`
+        INSERT INTO novel_names (novel_id, data, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(novel_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+      `).bind(novelId, data, now).run();
+      return new Response(JSON.stringify({ success: true, count: Object.keys(entries).length, updatedAt: now }), { headers });
+    }
+
     // 3. GET /api/novels/:id/chapter/:idx -> Lấy nội dung chương (Edge Cached KV)
     const chapterMatch = path.match(/^([a-zA-Z0-9_-]+)\/chapter\/(\d+)$/);
     if (request.method === 'GET' && chapterMatch) {

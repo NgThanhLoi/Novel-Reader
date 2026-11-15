@@ -11,6 +11,7 @@ import {
   DEFAULT_SETTINGS
 } from './utils/storage';
 import { syncNovelToCloudflare } from './utils/cloudflareSync';
+import { deleteBilingual, getMeta } from './utils/bilingual';
 import { pullMissingNovels, pushProgressToCloud, fetchCloudProgress } from './utils/cloudPull';
 import { Navbar } from './components/Navbar';
 import { LibraryView } from './components/LibraryView';
@@ -45,6 +46,7 @@ export default function App() {
   // Throttle cloud progress pushes: max 1 / 60s per novel, or on chapter change
   // (KV free tier chỉ 1.000 write/delete/ngày — không push dày)
   const lastPushRef = useRef<Record<string, { t: number; ch: number }>>({});
+  const lastSaveRef = useRef<Record<string, { t: number; ch: number }>>({});
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -146,7 +148,16 @@ export default function App() {
           progress: updatedProgress,
           updatedAt: new Date().toISOString()
         };
-        saveNovel(updatedNovel);
+        // Ghi IndexedDB cả object truyện (bộ dài ~30MB) -> không ghi mỗi lần cuộn:
+        // chỉ khi đổi chương hoặc tối đa 1 lần / 5s
+        {
+          const now = Date.now();
+          const last = lastSaveRef.current[novelId];
+          if (!last || last.ch !== chapterIndex || now - last.t > 5000) {
+            lastSaveRef.current[novelId] = { t: now, ch: chapterIndex };
+            saveNovel(updatedNovel);
+          }
+        }
 
         // Push lightweight position to cloud (throttled) for multi-device resume
         try {
@@ -196,8 +207,11 @@ export default function App() {
 
   // Save new novel from upload
   const handleSaveNovel = async (newNovel: Novel) => {
+    // nhập lại cùng id (vd. gói song ngữ bản mới) -> thay bản cũ, giữ tiến độ đọc
+    const old = novels.find(n => n.id === newNovel.id);
+    if (old) newNovel = { ...newNovel, progress: old.progress, bookmarks: old.bookmarks, status: old.status };
     await saveNovel(newNovel);
-    setNovels(prev => [newNovel, ...prev]);
+    setNovels(prev => [newNovel, ...prev.filter(n => n.id !== newNovel.id)]);
     showToast(`Đã thêm thành công truyện "${newNovel.title}" (${newNovel.chapters.length} chương)`);
     
     // Auto sync to Cloudflare if enabled
@@ -209,6 +223,7 @@ export default function App() {
   // Delete novel
   const handleDeleteNovel = async (id: string) => {
     await deleteNovel(id);
+    getMeta(id).then(m => m && deleteBilingual(id, m.chapterCount)).catch(() => {});
     setNovels(prev => prev.filter(n => n.id !== id));
     if (activeNovelId === id) {
       setActiveNovelId(null);

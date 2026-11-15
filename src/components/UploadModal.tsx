@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Novel, NovelFormat, Chapter } from '../types';
 import { parseEpubFile, parseMobiFile, parseJsonFile, parseTxtFile, splitIntoChapters } from '../utils/parser';
+import { importPackFile, isPackFile } from '../utils/bilingual';
 
 interface UploadModalProps {
   isOpen: boolean;
@@ -67,6 +68,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     setParseError(null);
 
     try {
+      // Gói song ngữ (.nrpack.json.gz) -> nhập thẳng, hỗ trợ đổi name realtime
+      if (isPackFile(file)) {
+        const novel = await importPackFile(file);
+        onSaveNovel(novel);
+        resetDraft();
+        onClose();
+        return;
+      }
+
       const extension = file.name.split('.').pop()?.toLowerCase();
       let result;
 
@@ -255,7 +265,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".epub,.mobi,.json,.txt,.md"
+                  accept=".epub,.mobi,.json,.txt,.md,.gz"
                   className="hidden"
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {
@@ -279,7 +289,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                       Kéo thả tệp vào đây hoặc <span className="text-amber-600 dark:text-amber-400 underline">duyệt tệp</span>
                     </p>
                     <p className="text-xs text-neutral-400 max-w-sm">
-                      Hỗ trợ sách điện tử: <strong>.epub</strong>, <strong>.mobi</strong>, <strong>.json</strong> hoặc <strong>.txt</strong>
+                      Hỗ trợ sách điện tử: <strong>.epub</strong>, <strong>.mobi</strong>, <strong>.json</strong> hoặc <strong>.txt</strong><br />Gói song ngữ <strong>.nrpack.json.gz</strong>: đổi name realtime
                     </p>
 
                     {/* Supported Format Pills */}

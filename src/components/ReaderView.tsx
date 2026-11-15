@@ -21,9 +21,14 @@ import {
   AlignJustify,
   Sliders,
   Check,
-  Share2
+  Share2,
+  PenLine,
+  Tags,
+  Loader2
 } from 'lucide-react';
 import { Novel, Chapter, ReaderSettings, ReaderTheme, ReaderFontFamily, ReaderContentWidth } from '../types';
+import { useNames } from '../hooks/useNames';
+import { EditCtx, NameEditor, NameListDrawer, PanelTheme, SegmentText, SourcePanel } from './NameTools';
 
 interface ReaderViewProps {
   novel: Novel;
@@ -71,6 +76,28 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const lastScrollY = useRef(0);
+
+  // Đổi name realtime (truyện nhập từ gói song ngữ .nrpack)
+  const names = useNames(novel.id, currentChapterIdx);
+  const [nameEditMode, setNameEditMode] = useState(() => {
+    try { return localStorage.getItem('nr_name_edit') === '1'; } catch { return false; }
+  });
+  const [editCtx, setEditCtx] = useState<EditCtx | null>(null);
+  const [sourcePara, setSourcePara] = useState<number | null>(null);
+  const [showNameList, setShowNameList] = useState(false);
+  const toggleNameEdit = () => {
+    setNameEditMode(v => {
+      try { localStorage.setItem('nr_name_edit', v ? '0' : '1'); } catch { /* noop */ }
+      return !v;
+    });
+  };
+  const paraSource = (i: number) => (i === -1 ? names.chapter?.tz : names.chapter?.z[i]) || '';
+  const openNameAt = (i: number, key: string) => {
+    const z = paraSource(i);
+    const at = z.indexOf(key);
+    setEditCtx(at >= 0 ? { z, start: at, end: at + key.length } : { z: key, start: 0, end: key.length });
+  };
+  const bodyText = names.view?.plain ?? currentChapter.content;
 
   // Theme styling map
   const themeClasses: Record<ReaderTheme, { bg: string; text: string; header: string; border: string; accent: string }> = {
@@ -215,7 +242,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       setIsSpeaking(false);
     } else {
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(currentChapter.content);
+      const utterance = new SpeechSynthesisUtterance(bodyText);
       if (selectedVoice) {
         utterance.voice = selectedVoice;
       }
@@ -327,12 +354,19 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   };
 
   const handleCreateBookmark = () => {
-    const snippet = currentChapter.content.substring(0, 100).trim() + '...';
+    const snippet = bodyText.substring(0, 100).trim() + '...';
     onAddBookmark(novel.id, currentChapterIdx, currentChapter.title, snippet);
   };
 
   // Convert raw text content into beautiful paragraphs
   const paragraphs = currentChapter.content.split(/\n\n+/).filter(p => p.trim().length > 0);
+
+  const panelTheme: PanelTheme = {
+    panel: isCustomTheme
+      ? 'bg-white text-neutral-900 dark:bg-neutral-900 dark:text-neutral-100'
+      : `${currentThemeStyle.bg} ${currentThemeStyle.text}`,
+    border: currentThemeStyle.border
+  };
 
   return (
     <div 
@@ -368,6 +402,30 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
           {/* Right Action Tools */}
           <div className="flex items-center gap-1.5 shrink-0">
+            {/* Đổi name realtime */}
+            {names.engine && (
+              <>
+                <button
+                  id="reader-name-edit-btn"
+                  onClick={toggleNameEdit}
+                  className={`p-2 rounded-lg border transition-colors ${currentThemeStyle.border} ${
+                    nameEditMode ? 'bg-amber-500 text-white border-amber-600' : 'hover:opacity-80'
+                  }`}
+                  title={nameEditMode ? 'Tắt chế độ sửa name' : 'Bật chế độ sửa name (chạm tên / đoạn để sửa)'}
+                >
+                  <PenLine className="w-4 h-4" />
+                </button>
+                <button
+                  id="reader-name-list-btn"
+                  onClick={() => setShowNameList(true)}
+                  className={`p-2 rounded-lg border transition-colors ${currentThemeStyle.border} hover:opacity-80`}
+                  title="Danh sách name"
+                >
+                  <Tags className="w-4 h-4" />
+                </button>
+              </>
+            )}
+
             {/* Table of Contents Drawer Button */}
             <button
               id="reader-toc-btn"
@@ -514,8 +572,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           <span className="text-xs uppercase tracking-widest opacity-60 font-semibold mb-2 block">
             {novel.title} • Chương {currentChapterIdx + 1} / {novel.chapters.length}
           </span>
-          <h1 className="text-2xl sm:text-3xl font-bold font-serif tracking-tight leading-tight">
-            {currentChapter.title}
+          <h1
+            className={`text-2xl sm:text-3xl font-bold font-serif tracking-tight leading-tight ${names.view && nameEditMode ? 'cursor-pointer' : ''}`}
+            onClick={names.view && nameEditMode ? () => setSourcePara(-1) : undefined}
+          >
+            {names.view ? (
+              <SegmentText segs={names.view.title} editMode={nameEditMode} onName={k => openNameAt(-1, k)} />
+            ) : (
+              currentChapter.title
+            )}
           </h1>
           <div className="flex items-center justify-center gap-4 text-xs opacity-60 mt-3">
             <span>{currentChapter.wordCount.toLocaleString()} từ</span>
@@ -535,11 +600,21 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             lineHeight: settings.lineHeight
           }}
         >
-          {paragraphs.map((p, idx) => (
-            <p key={idx} className="tracking-normal text-pretty">
-              {p}
-            </p>
-          ))}
+          {names.view
+            ? names.view.paras.map((segs, idx) => (
+                <p
+                  key={idx}
+                  className={`tracking-normal text-pretty ${nameEditMode ? 'cursor-pointer hover:bg-current/[0.04] rounded' : ''}`}
+                  onClick={nameEditMode ? () => setSourcePara(idx) : undefined}
+                >
+                  <SegmentText segs={segs} editMode={nameEditMode} onName={k => openNameAt(idx, k)} />
+                </p>
+              ))
+            : paragraphs.map((p, idx) => (
+                <p key={idx} className="tracking-normal text-pretty">
+                  {p}
+                </p>
+              ))}
         </article>
 
         {/* Bottom Chapter Navigation Bar */}
@@ -796,6 +871,49 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Trạng thái dịch lại khi đổi name */}
+      {(names.status || names.error) && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-[calc(100vw-2rem)] px-3 py-1.5 rounded-full text-xs font-semibold shadow-lg bg-neutral-900/90 text-white flex items-center gap-2">
+          {names.status && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+          <span className="truncate">{names.status || names.error}</span>
+        </div>
+      )}
+
+      {names.engine && sourcePara !== null && names.view && (
+        <SourcePanel
+          engine={names.engine}
+          z={paraSource(sourcePara)}
+          vi={sourcePara === -1 ? names.view.title : names.view.paras[sourcePara] || []}
+          theme={panelTheme}
+          onPick={ctx => { setSourcePara(null); setEditCtx(ctx); }}
+          onClose={() => setSourcePara(null)}
+        />
+      )}
+
+      {names.engine && editCtx && (
+        <NameEditor
+          key={`${editCtx.z}:${editCtx.start}:${editCtx.end}`}
+          engine={names.engine}
+          ctx={editCtx}
+          theme={panelTheme}
+          onSave={(zh, v) => names.setNames({ [zh]: v })}
+          onReset={names.resetName}
+          onClose={() => setEditCtx(null)}
+        />
+      )}
+
+      {names.engine && showNameList && (
+        <NameListDrawer
+          engine={names.engine}
+          novelTitle={novel.title}
+          theme={panelTheme}
+          onEdit={zh => setEditCtx({ z: zh, start: 0, end: zh.length })}
+          onReset={names.resetName}
+          onImport={changes => names.setNames(changes)}
+          onClose={() => setShowNameList(false)}
+        />
       )}
 
       {/* Table of Contents Slide-over Drawer */}
