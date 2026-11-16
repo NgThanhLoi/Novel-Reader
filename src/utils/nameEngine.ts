@@ -18,6 +18,7 @@ export interface BiMeta {
 export interface NameEntry {
   v: string | null; // null = bỏ name (không phải tên riêng, để máy dịch)
   t: number; // thời điểm sửa (ms) — bản mới hơn thắng khi đồng bộ
+  p?: 1; // cụm từ (sửa nghĩa, không phải tên riêng): không gạch chân như name, gợi ý theo nghĩa
 }
 
 export interface NameDoc {
@@ -27,7 +28,8 @@ export interface NameDoc {
 
 export interface Segment {
   s: string;
-  k?: string; // chữ Trung nếu đoạn này là name
+  k?: string; // chữ Trung nếu đoạn này là name / cụm từ
+  ph?: boolean; // là cụm từ người dùng sửa nghĩa
 }
 
 const LATIN = /[A-Za-zÀ-ɏḀ-ỿ]/;
@@ -85,6 +87,7 @@ export class NameEngine {
   readonly dynKeys: string[] = []; // khóa làm đổi cách tách câu -> đoạn chứa nó phải dịch lại
   private markerRe: RegExp;
   private fixes: Map<string, string>;
+  private phrases = new Set<string>();
 
   constructor(meta: BiMeta, doc: NameDoc) {
     this.meta = meta;
@@ -98,6 +101,7 @@ export class NameEngine {
       } else {
         if (!this.base.has(k)) this.dynKeys.push(k);
         this.active.set(k, e.v);
+        if (e.p) this.phrases.add(k);
       }
     }
     this.fixes = new Map(Object.entries(meta.fixes || {}));
@@ -161,6 +165,7 @@ export class NameEngine {
   baseValue(zh: string) { return this.base.get(zh); }
   userEntry(zh: string): NameEntry | undefined { return this.doc.entries[zh]; }
   current(zh: string): string | undefined { return this.active.get(zh); }
+  isPhrase(zh: string) { return this.phrases.has(zh); }
 
   /** giá trị hiển thị cho một mã (kể cả name đã bị bỏ nhưng đoạn chưa kịp dịch lại) */
   display(zh: string): string {
@@ -242,7 +247,7 @@ export class NameEngine {
       let v = k !== undefined ? this.display(k) : m[0];
       // đầu dòng / sau mở ngoặc thoại -> viết hoa chữ đầu
       if (v && /(^[\s　]*|[「『“]|^Chương \d+: )$/.test(acc)) v = v[0].toUpperCase() + v.slice(1);
-      segs.push(k !== undefined ? { s: v, k } : { s: v });
+      segs.push(k !== undefined ? (this.phrases.has(k) ? { s: v, k, ph: true } : { s: v, k }) : { s: v });
       acc += v;
       last = m.index + m[0].length;
     }

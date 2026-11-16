@@ -128,12 +128,16 @@ export function useNames(novelId: string, chapterIdx: number) {
     }, 3000);
   }, [novelId]);
 
-  const setNames = useCallback((changes: Record<string, string | null>) => {
+  /** phrase: các mục là cụm từ (sửa nghĩa) thay vì name; mảng = chỉ những khóa đó là cụm từ */
+  const setNames = useCallback((changes: Record<string, string | null>, phrase: boolean | string[] = false) => {
     const cur = docRef.current;
     if (!cur) return;
     const t = Date.now();
     const entries = { ...cur.entries };
-    for (const [k, v] of Object.entries(changes)) entries[k] = { v, t };
+    for (const [k, v] of Object.entries(changes)) {
+      const isP = Array.isArray(phrase) ? phrase.includes(k) : phrase;
+      entries[k] = isP && v !== null ? { v, t, p: 1 } : { v, t };
+    }
     const nd: NameDoc = { entries, updatedAt: t };
     docRef.current = nd;
     setDoc(nd);

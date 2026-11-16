@@ -19,22 +19,23 @@ export interface TapInfo {
   focus?: number; // âm tiết được chạm trong sylls
   near?: string[]; // các âm tiết quanh chỗ chạm ('#' = name / ranh giới)
   nearFocus?: number;
+  cap?: boolean; // từ viết hoa giữa câu (nhiều khả năng là tên riêng)
   frac: number; // vị trí tương đối của từ trong đoạn (0..1)
   from: number; // khoảng token để tô đỏ
   to: number;
 }
 
-interface Tok { s: string; k?: string; w?: boolean; off: number }
+interface Tok { s: string; k?: string; ph?: boolean; w?: boolean; off: number }
 
 const WORD = /[0-9A-Za-zÀ-ỹđĐ]/;
-const isCap = (s: string) => { const c = s.replace(/^[^0-9A-Za-zÀ-ỹđĐ]+/, '')[0]; return !!c && c !== c.toLowerCase(); };
-const syl = (s: string) => s.toLowerCase().replace(/[^0-9a-zà-ỹđ]/g, '');
+const isCap = (s: string) => { const c = s.normalize('NFC').replace(/^[^0-9A-Za-zÀ-ỹđĐ]+/, '')[0]; return !!c && c !== c.toLowerCase(); };
+const syl = (s: string) => s.normalize('NFC').toLowerCase().replace(/[^0-9a-zà-ỹđ]/g, ''); // API đôi khi trả dấu tổ hợp (NFD)
 
 function tokenize(segs: Segment[]): Tok[] {
   const out: Tok[] = [];
   let off = 0;
   for (const x of segs) {
-    if (x.k) { out.push({ s: x.s, k: x.k, off }); off += x.s.length; continue; }
+    if (x.k) { out.push({ s: x.s, k: x.k, ph: x.ph, off }); off += x.s.length; continue; }
     for (const p of x.s.split(/(\s+)/)) {
       if (!p) continue;
       out.push({ s: p, w: WORD.test(p), off });
@@ -72,7 +73,12 @@ export const SegmentText: React.FC<{
     const left: string[] = [], right: string[] = [];
     for (let j = i - 1; j >= 0 && left.length < 6; j--) if (toks[j].k) { left.unshift('#'); break; } else if (toks[j].w) left.unshift(syl(toks[j].s));
     for (let j = i + 1; j < toks.length && right.length < 6; j++) if (toks[j].k) { right.push('#'); break; } else if (toks[j].w) right.push(syl(toks[j].s));
-    onTap?.({ el, sylls: idx.map(j => syl(toks[j].s)), focus: idx.indexOf(i), near: [...left, syl(t.s), ...right], nearFocus: left.length, frac, from: a, to: b });
+    // viết hoa giữa câu (không tính đầu câu / đầu lời thoại)
+    let prev = '';
+    for (let j = a - 1; j >= 0 && !prev; j--) prev = toks[j].s.trim();
+    const sentStart = !prev || /[.!?…:“"「『]$/.test(prev) || /^[“"「『]/.test(toks[a].s);
+    const cap = isCap(t.s) && (!sentStart || b > a);
+    onTap?.({ el, cap, sylls: idx.map(j => syl(toks[j].s)), focus: idx.indexOf(i), near: [...left, syl(t.s), ...right], nearFocus: left.length, frac, from: a, to: b });
   };
 
   return (
@@ -85,7 +91,7 @@ export const SegmentText: React.FC<{
             key={i}
             data-tap=""
             onClick={e => { e.stopPropagation(); tap(i, e.currentTarget); }}
-            className={`cursor-pointer rounded-sm ${on ? 'bg-red-500/20 text-red-600 dark:text-red-400' : t.k ? 'border-b border-dotted border-amber-500 hover:bg-amber-500/15' : 'hover:bg-current/10'}`}
+            className={`cursor-pointer rounded-sm ${on ? 'bg-red-500/20 text-red-600 dark:text-red-400' : t.ph ? 'border-b border-dotted border-sky-500 hover:bg-sky-500/15' : t.k ? 'border-b border-dotted border-amber-500 hover:bg-amber-500/15' : 'hover:bg-current/10'}`}
           >
             {t.s}
           </span>
@@ -103,7 +109,10 @@ export interface EditCtx {
   anchor?: DOMRect | null;
   guess?: number; // không dò được: vị trí ước chừng trong câu gốc để tô gợi ý
   aligning?: boolean; // đang dò theo nghĩa
+  kind?: Kind; // gợi ý loại khi mở: chạm từ viết thường -> cụm từ
 }
+
+export type Kind = 'name' | 'phrase';
 
 const meaningCache = new Map<string, string>();
 
@@ -122,7 +131,7 @@ export const NamePopover: React.FC<{
   engine: NameEngine;
   ctx: EditCtx;
   theme: PanelTheme;
-  onSave: (zh: string, v: string | null) => void;
+  onSave: (zh: string, v: string | null, phrase: boolean) => void;
   onReset: (zh: string) => void;
   onClose: () => void;
 }> = ({ engine, ctx, theme, onSave, onReset, onClose }) => {
@@ -134,7 +143,10 @@ export const NamePopover: React.FC<{
   const user = zh ? engine.userEntry(zh) : undefined;
   const changedFromBase = !!user && (base === undefined ? user.v !== null : user.v !== base);
   const [custom, setCustom] = useState('');
+  const touched = useRef(false); // người dùng đã gõ/chọn vào ô tự nhập
   const [meaning, setMeaning] = useState<string | null>(null);
+  const [kind, setKind] = useState<Kind>(ctx.kind || 'name');
+  const isP = kind === 'phrase';
   const boxRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<React.CSSProperties>({ visibility: 'hidden' });
@@ -147,14 +159,17 @@ export const NamePopover: React.FC<{
 
   // giá trị gợi ý trong ô tự nhập + dịch nghĩa
   useEffect(() => {
-    setCustom(zh ? cur ?? titleCase(engine.hvName(zh)) : '');
+    // loại theo mục đang có: cụm từ đã lưu -> cụm từ; name đang có -> name; còn lại giữ lựa chọn
+    if (zh && engine.isPhrase(zh)) setKind('phrase');
+    else if (zh && cur !== undefined) setKind('name');
+    touched.current = false;
     setMeaning(null);
-    if (!zh) return;
+    if (!zh) { setCustom(''); return; }
     if (meaningCache.has(zh)) { setMeaning(meaningCache.get(zh)!); return; }
     let alive = true;
     const t = setTimeout(() => {
       translateLines([zh]).then(r => {
-        const m = (r[0] || '').trim().replace(/[.。]$/, '');
+        const m = (r[0] || '').normalize('NFC').trim().replace(/[.。]$/, '');
         meaningCache.set(zh, m);
         if (alive) setMeaning(m);
       }).catch(() => alive && setMeaning(''));
@@ -162,6 +177,15 @@ export const NamePopover: React.FC<{
     return () => { alive = false; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zh]);
+
+  // cụm từ: API dịch cụm đứng riêng nên viết hoa chữ đầu -> hạ xuống
+  const meaningV = meaning && isP ? meaning.replace(/^\p{Lu}(?=\p{Ll})/u, c => c.toLowerCase()) : meaning;
+  useEffect(() => {
+    if (!zh || touched.current) return;
+    setCustom(cur ?? (isP ? (meaningV || engine.hvName(zh)) : titleCase(engine.hvName(zh))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zh, isP, meaningV]);
+  const pick = (v: string) => { touched.current = true; setCustom(v); };
 
   // vị trí: máy tính -> nổi ngay dưới/trên từ; điện thoại -> neo đáy màn hình, cuộn từ lên cho khỏi bị che
   useLayoutEffect(() => {
@@ -210,17 +234,39 @@ export const NamePopover: React.FC<{
     : { s: sel.s, e: cover[sel.e]?.end ?? Math.min(z.length, sel.e + 1) });
   const shrink = (side: -1 | 1) => sel && sel.e - sel.s > 1 && setSel(side < 0 ? { s: sel.s + 1, e: sel.e } : { s: sel.s, e: sel.e - 1 });
 
-  const save = (v: string | null) => { if (!zh) return; if (v !== null && !v.trim()) return; onSave(zh, v === null ? null : v.trim()); onClose(); };
+  const save = (v: string | null) => { if (!zh) return; if (v !== null && !v.trim()) return; onSave(zh, v === null ? null : v.trim(), isP); onClose(); };
 
   const rows = useMemo(() => {
     if (!zh) return [];
     const list: Array<{ label: string; v: string; tip?: string }> = [];
-    if (cur !== undefined) list.push({ label: 'Đang', v: cur, tip: 'Name đang dùng' });
-    if (base !== undefined && base !== cur) list.push({ label: 'Gốc', v: base, tip: 'Name mặc định của gói' });
-    list.push(...variants(engine, zh));
+    if (cur !== undefined) list.push({ label: 'Đang', v: cur, tip: 'Đang dùng' });
+    if (base !== undefined && base !== cur) list.push({ label: 'Gốc', v: base, tip: 'Mặc định của gói' });
+    if (isP) {
+      const hv = engine.hvName(zh);
+      list.push({ label: 'hv', v: hv, tip: 'Hán Việt — chữ thường' });
+    } else list.push(...variants(engine, zh));
     const seen = new Set<string>();
     return list.filter(r => (seen.has(r.v) ? false : (seen.add(r.v), true)));
-  }, [engine, zh, cur, base]);
+  }, [engine, zh, cur, base, isP]);
+
+  const meaningRow = (
+    <div className="flex items-stretch">
+      <span className="w-12 shrink-0 grid place-items-center text-[11px] font-bold bg-sky-600/80 text-white" title="Dịch nghĩa (máy dịch)">Nghĩa</span>
+      {meaning === null ? (
+        <span className="flex-1 px-2.5 py-2 opacity-50"><Loader2 className="w-3.5 h-3.5 inline animate-spin mr-1" />đang dịch…</span>
+      ) : (
+        <button className="flex-1 min-w-0 text-left px-2.5 py-2 hover:bg-amber-500/10 disabled:opacity-50" disabled={!meaningV} onClick={() => meaningV && save(meaningV)} title="Chạm để lưu">
+          <span className={isP ? 'font-semibold' : ''}>{meaningV || 'không dịch được'}</span>
+          {meaningV && meaningV === cur && <Check className="w-3.5 h-3.5 inline ml-1.5 text-emerald-600" />}
+        </button>
+      )}
+      {meaningV && (
+        <button className="px-2.5 opacity-50 hover:opacity-100" title="Sửa từ gợi ý này" onClick={() => pick(meaningV)}>
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  );
 
   const ctxFrom = sel ? Math.max(0, sel.s - 40) : 0;
   const ctxTo = sel ? Math.min(z.length, sel.e + 40) : z.length;
@@ -278,8 +324,22 @@ export const NamePopover: React.FC<{
           ) : <p className="text-xs opacity-70">Không dò được chữ gốc của từ này (vùng tô nhạt là chỗ ước chừng) — chạm chữ Trung ở trên, chữ đầu rồi chữ cuối, để chọn cụm.</p>
         ) : (
           <>
-            <div className="flex items-center gap-2 text-xs opacity-70">
-              <span className="truncate">{engine.hv(zh)}</span>
+            <div className="flex items-center gap-2 text-xs">
+              <div className="inline-flex rounded-lg border border-current/20 p-0.5 shrink-0" role="tablist">
+                {(['name', 'phrase'] as Kind[]).map(k => (
+                  <button
+                    key={k}
+                    role="tab"
+                    aria-selected={kind === k}
+                    onClick={() => setKind(k)}
+                    title={k === 'name' ? 'Tên riêng: gợi ý Hán Việt viết hoa' : 'Cụm từ: sửa nghĩa / sửa câu dịch sai, không viết hoa'}
+                    className={`px-2.5 py-1 rounded-md font-semibold transition ${kind === k ? (k === 'name' ? 'bg-amber-500 text-white' : 'bg-sky-600 text-white') : 'opacity-60 hover:opacity-100'}`}
+                  >
+                    {k === 'name' ? 'Name' : 'Cụm từ'}
+                  </button>
+                ))}
+              </div>
+              <span className="truncate opacity-70">{engine.hv(zh)}</span>
               <button className="ml-auto p-1 hover:opacity-100" title="Sao chép chữ Trung" onClick={() => navigator.clipboard?.writeText(zh)}>
                 <Copy className="w-3.5 h-3.5" />
               </button>
@@ -287,7 +347,8 @@ export const NamePopover: React.FC<{
 
             {/* gợi ý: chạm là lưu luôn */}
             <div className="rounded-lg border border-current/15 divide-y divide-current/10 overflow-hidden">
-              {rows.map(r => (
+              {isP && meaningRow}
+              {rows.filter(r => !(isP && r.v === meaningV)).map(r => (
                 <div key={r.label + r.v} className="flex items-stretch">
                   <span title={r.tip} className="w-12 shrink-0 grid place-items-center text-[11px] font-bold bg-emerald-600/80 text-white">{r.label}</span>
                   <button className="flex-1 min-w-0 text-left px-2.5 py-2 hover:bg-amber-500/10 active:bg-amber-500/20" onClick={() => save(r.v)} title="Chạm để lưu">
@@ -295,53 +356,44 @@ export const NamePopover: React.FC<{
                     {r.v === cur && <Check className="w-3.5 h-3.5 inline ml-1.5 text-emerald-600" />}
                     
                   </button>
-                  <button className="px-2.5 opacity-50 hover:opacity-100" title="Sửa từ gợi ý này" onClick={() => setCustom(r.v)}>
+                  <button className="px-2.5 opacity-50 hover:opacity-100" title="Sửa từ gợi ý này" onClick={() => pick(r.v)}>
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
                 </div>
               ))}
-              <div className="flex items-stretch">
-                <span className="w-12 shrink-0 grid place-items-center text-[11px] font-bold bg-sky-600/80 text-white" title="Dịch nghĩa (máy dịch)">Nghĩa</span>
-                {meaning === null ? (
-                  <span className="flex-1 px-2.5 py-2 opacity-50"><Loader2 className="w-3.5 h-3.5 inline animate-spin mr-1" />đang dịch…</span>
-                ) : (
-                  <button className="flex-1 min-w-0 text-left px-2.5 py-2 hover:bg-amber-500/10 disabled:opacity-50" disabled={!meaning} onClick={() => meaning && save(meaning)}>
-                    {meaning || 'không dịch được'}
-                  </button>
-                )}
-                {meaning && (
-                  <button className="px-2.5 opacity-50 hover:opacity-100" title="Sửa từ gợi ý này" onClick={() => setCustom(meaning)}>
-                    <Pencil className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
+              {!isP && meaningRow}
             </div>
 
             {/* tự nhập */}
             <div className="flex gap-1.5">
               <input
                 value={custom}
-                onChange={e => setCustom(e.target.value)}
+                onChange={e => pick(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') save(custom); }}
                 className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-current/25 bg-transparent text-base focus:outline-none focus:border-amber-500"
-                placeholder="Tự nhập name…"
+                placeholder={isP ? 'Tự nhập nghĩa…' : 'Tự nhập name…'}
               />
               <button className={btnPrimary} disabled={!custom.trim()} onClick={() => save(custom)}>Lưu</button>
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5">
-              {cur !== undefined && (
-                <button className={btn} title="Không phải tên riêng — để máy dịch nghĩa" onClick={() => save(null)}>
-                  <Ban className="w-3.5 h-3.5 inline mr-1" />Không phải name
+              {cur !== undefined && (base !== undefined || !engine.isPhrase(zh)) && (
+                <button className={btn} title="Bỏ — để máy tự dịch cụm này" onClick={() => save(null)}>
+                  <Ban className="w-3.5 h-3.5 inline mr-1" />{engine.isPhrase(zh) ? 'Bỏ cụm từ' : 'Không phải name'}
                 </button>
               )}
               {changedFromBase && (
                 <button className={btn} onClick={() => { onReset(zh); onClose(); }}>
-                  <RotateCcw className="w-3.5 h-3.5 inline mr-1" />Về mặc định{base !== undefined ? `: ${base}` : ''}
+                  <RotateCcw className="w-3.5 h-3.5 inline mr-1" />
+                  {base !== undefined ? `Về mặc định: ${base}` : engine.isPhrase(zh) ? 'Xóa cụm từ' : 'Xóa name'}
                 </button>
               )}
               {cur === undefined && (
-                <span className="text-[11px] opacity-60">Name mới — các đoạn có 「{zh}」 sẽ được dịch lại.</span>
+                <span className="text-[11px] opacity-60">
+                  {isP
+                    ? <>Cụm từ: mọi chỗ có 「{zh}」 dùng nghĩa này, câu được dịch lại cho đúng thứ tự.</>
+                    : <>Name mới — các đoạn có 「{zh}」 sẽ được dịch lại.</>}
+                </span>
               )}
             </div>
           </>
@@ -358,7 +410,7 @@ export const NameListDrawer: React.FC<{
   theme: PanelTheme;
   onEdit: (zh: string) => void;
   onReset: (zh: string) => void;
-  onImport: (changes: Record<string, string | null>) => void;
+  onImport: (changes: Record<string, string | null>, phrases: string[]) => void;
   onClose: () => void;
 }> = ({ engine, novelTitle, theme, onEdit, onReset, onImport, onClose }) => {
   const [tab, setTab] = useState<'edited' | 'all'>('edited');
@@ -372,7 +424,7 @@ export const NameListDrawer: React.FC<{
         return b === undefined ? e.v !== null : e.v !== b;
       })
       .sort((a, b) => b[1].t - a[1].t)
-      .map(([k, e]) => ({ zh: k, v: e.v, base: engine.baseValue(k) }));
+      .map(([k, e]) => ({ zh: k, v: e.v, base: engine.baseValue(k), p: !!e.p }));
   }, [engine]);
 
   const rows = useMemo(() => {
@@ -381,12 +433,12 @@ export const NameListDrawer: React.FC<{
       return edited.filter(r => !ql || r.zh.includes(q.trim()) || (r.v || '').toLowerCase().includes(ql));
     }
     if (!ql) return [];
-    const out: Array<{ zh: string; v: string | null; base?: string }> = [];
+    const out: Array<{ zh: string; v: string | null; base?: string; p?: boolean }> = [];
     const seen = new Set<string>();
     const consider = (k: string) => {
       if (seen.has(k)) return; seen.add(k);
       const v = engine.current(k) ?? null;
-      if (k.includes(q.trim()) || (v || '').toLowerCase().includes(ql)) out.push({ zh: k, v, base: engine.baseValue(k) });
+      if (k.includes(q.trim()) || (v || '').toLowerCase().includes(ql)) out.push({ zh: k, v, base: engine.baseValue(k), p: engine.isPhrase(k) });
     };
     for (const k of Object.keys(engine.doc.entries)) consider(k);
     for (const k of engine.meta.keys) { consider(k); if (out.length >= 200) break; }
@@ -394,7 +446,8 @@ export const NameListDrawer: React.FC<{
   }, [tab, q, edited, engine]);
 
   const exportTxt = () => {
-    const lines = edited.map(r => (r.v === null ? `# bỏ name: ${r.zh}` : `${r.zh}=${r.v}`));
+    // cụm từ có tiền tố ~ (gộp vào fixes_xuanjian.txt), name gộp vào glossary
+    const lines = edited.map(r => (r.v === null ? `# bỏ name: ${r.zh}` : `${r.p ? '~' : ''}${r.zh}=${r.v}`));
     const blob = new Blob([`# Name sửa trong Novel-Reader — ${novelTitle}\n` + lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -405,14 +458,19 @@ export const NameListDrawer: React.FC<{
 
   const doImport = () => {
     const changes: Record<string, string | null> = {};
+    const phrases: string[] = [];
     for (const raw of (importText || '').split('\n')) {
-      const l = raw.trim();
+      let l = raw.trim();
       if (!l || l.startsWith('#') || !l.includes('=')) continue;
+      const isP = l.startsWith('~');
+      if (isP) l = l.slice(1);
       const [k, ...rest] = l.split('=');
       const v = rest.join('=').trim();
-      if (k.trim()) changes[k.trim()] = v || null;
+      if (!k.trim()) continue;
+      changes[k.trim()] = v || null;
+      if (isP) phrases.push(k.trim());
     }
-    if (Object.keys(changes).length) onImport(changes);
+    if (Object.keys(changes).length) onImport(changes, phrases);
     setImportText(null);
   };
 
@@ -441,7 +499,7 @@ export const NameListDrawer: React.FC<{
 
         {importText !== null ? (
           <div className="flex flex-col gap-2 flex-1">
-            <p className="text-[11px] opacity-70">Mỗi dòng một name: <code>中文=Việt</code>. Để trống bên phải (<code>中文=</code>) là bỏ name.</p>
+            <p className="text-[11px] opacity-70">Mỗi dòng một name: <code>中文=Việt</code>. Cụm từ (sửa nghĩa) thêm <code>~</code> đầu dòng: <code>~心理活动=hoạt động tâm lý</code>. Để trống bên phải (<code>中文=</code>) là bỏ.</p>
             <textarea value={importText} onChange={e => setImportText(e.target.value)} className="flex-1 min-h-40 p-2 rounded-lg border border-current/20 bg-transparent font-mono text-xs focus:outline-none" />
             <div className="flex justify-end gap-1.5">
               <button className={btn} onClick={() => setImportText(null)}>Hủy</button>
@@ -451,13 +509,14 @@ export const NameListDrawer: React.FC<{
         ) : (
           <div className="flex-1 overflow-y-auto -mx-1 px-1 space-y-1">
             {tab === 'all' && !q.trim() && <p className="text-xs opacity-60 p-2">Gõ để tìm.</p>}
-            {tab === 'edited' && !edited.length && <p className="text-xs opacity-60 p-2">Chưa sửa name nào. Bật chế độ sửa name (biểu tượng bút) rồi chạm vào từ bất kỳ trong truyện.</p>}
+            {tab === 'edited' && !edited.length && <p className="text-xs opacity-60 p-2">Chưa sửa name / cụm từ nào. Bật chế độ sửa (biểu tượng bút) rồi chạm vào từ bất kỳ trong truyện.</p>}
             {rows.map(r => (
               <div key={r.zh} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-current/5">
                 <button className="flex-1 text-left min-w-0" data-tap="" onClick={() => onEdit(r.zh)}>
                   <span className="font-semibold">{r.zh}</span>
                   <span className="opacity-50"> = </span>
                   <span className={r.v === null ? 'italic opacity-60' : ''}>{r.v ?? '(bỏ name)'}</span>
+                  {r.p && <span className="ml-1.5 px-1.5 py-px rounded text-[10px] font-bold bg-sky-600/80 text-white align-middle">cụm từ</span>}
                   {r.base !== undefined && r.base !== r.v && <span className="block text-[11px] opacity-50 truncate">mặc định: {r.base}</span>}
                 </button>
                 {tab === 'edited' && (

@@ -135,7 +135,7 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
     }
 
     // 2c. GET/PUT /api/novels/:id/names -> Bộ name người dùng (đổi name realtime), đồng bộ đa thiết bị
-    //     data = { entries: { 中文: { v: string|null, t: ms } }, updatedAt }
+    //     data = { entries: { 中文: { v: string|null, t: ms, p?: 1 (cụm từ) } }, updatedAt }
     const namesMatch = path.match(/^([a-zA-Z0-9_-]+)\/names$/);
     if (namesMatch && (request.method === 'GET' || request.method === 'PUT')) {
       const novelId = namesMatch[1];
@@ -156,10 +156,12 @@ export const onRequest = async (context: PagesFunctionContext<Env>): Promise<Res
       }
       // gộp với bản trên server: mỗi name giữ bản sửa mới hơn
       const cur = await env.DB.prepare('SELECT data FROM novel_names WHERE novel_id = ?').bind(novelId).first() as any;
-      const entries: Record<string, { v: string | null; t: number }> = cur ? (JSON.parse(cur.data).entries || {}) : {};
-      for (const [k, e] of Object.entries(body.entries as Record<string, { v: string | null; t: number }>)) {
+      // p: 1 = cụm từ (sửa nghĩa) thay vì name
+      type Entry = { v: string | null; t: number; p?: 1 };
+      const entries: Record<string, Entry> = cur ? (JSON.parse(cur.data).entries || {}) : {};
+      for (const [k, e] of Object.entries(body.entries as Record<string, Entry>)) {
         if (!e || typeof e.t !== 'number' || (e.v !== null && typeof e.v !== 'string')) continue;
-        if (!entries[k] || e.t > entries[k].t) entries[k] = { v: e.v, t: e.t };
+        if (!entries[k] || e.t > entries[k].t) entries[k] = e.p === 1 && e.v !== null ? { v: e.v, t: e.t, p: 1 } : { v: e.v, t: e.t };
       }
       const now = new Date().toISOString();
       const data = JSON.stringify({ entries, updatedAt: Date.now() });

@@ -106,18 +106,20 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         const d = Math.abs(j - t.frac * z.length);
         if (d < best) { best = d; at = j; }
       }
-      setEditCtx(at >= 0 ? { z, start: at, end: at + t.key.length, anchor } : { z: t.key, start: 0, end: t.key.length, anchor });
+      const kind = names.engine.isPhrase(t.key) ? 'phrase' : 'name';
+      setEditCtx(at >= 0 ? { z, start: at, end: at + t.key.length, anchor, kind } : { z: t.key, start: 0, end: t.key.length, anchor, kind });
       return;
     }
     const loc = names.engine.locate(z, t.sylls || [], t.focus || 0, t.frac);
-    if (loc) { setEditCtx({ z, start: loc.start, end: loc.end, anchor }); return; }
+    const kind = t.cap ? 'name' : 'phrase';
+    if (loc) { setEditCtx({ z, start: loc.start, end: loc.end, anchor, kind }); return; }
     // từ dịch nghĩa: dò bằng cách dịch các cụm chữ quanh vị trí ước chừng
     const guess = Math.round(t.frac * z.length);
-    const pending: EditCtx = { z, start: -1, end: -1, anchor, guess, aligning: true };
+    const pending: EditCtx = { z, start: -1, end: -1, anchor, guess, aligning: true, kind };
     setEditCtx(pending);
     alignByMeaning(z, guess, t.near || [], t.nearFocus || 0)
       .catch(() => null)
-      .then(r => setEditCtx(c => (c !== pending ? c : r ? { z, start: r.start, end: r.end, anchor } : { ...pending, aligning: false })));
+      .then(r => setEditCtx(c => (c !== pending ? c : r ? { z, start: r.start, end: r.end, anchor, kind } : { ...pending, aligning: false })));
   };
   const closeEditor = useCallback(() => { setEditCtx(null); setHl(null); }, []);
   useEffect(() => { closeEditor(); }, [currentChapterIdx, nameEditMode, closeEditor]);
@@ -910,7 +912,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           engine={names.engine}
           ctx={editCtx}
           theme={panelTheme}
-          onSave={(zh, v) => names.setNames({ [zh]: v })}
+          onSave={(zh, v, phrase) => names.setNames({ [zh]: v }, phrase)}
           onReset={names.resetName}
           onClose={closeEditor}
         />
@@ -921,9 +923,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           engine={names.engine}
           novelTitle={novel.title}
           theme={panelTheme}
-          onEdit={zh => { setHl(null); setEditCtx({ z: zh, start: 0, end: zh.length }); }}
+          onEdit={zh => { setHl(null); setEditCtx({ z: zh, start: 0, end: zh.length, kind: names.engine?.isPhrase(zh) ? 'phrase' : 'name' }); }}
           onReset={names.resetName}
-          onImport={changes => names.setNames(changes)}
+          onImport={(changes, phrases) => names.setNames(changes, phrases)}
           onClose={() => setShowNameList(false)}
         />
       )}

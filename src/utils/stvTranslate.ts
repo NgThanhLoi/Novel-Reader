@@ -88,7 +88,7 @@ export async function alignByMeaning(
   const fw = words.map(w => w.normalize('NFC').toLowerCase());
   let best: { start: number; end: number } | null = null, bestScore = -Infinity;
   for (const c of cands) {
-    const tr = (alignCache.get(c.t) || '').toLowerCase().replace(/[^0-9a-zà-ỹđ\s]/g, ' ').trim().split(/\s+/).filter(Boolean);
+    const tr = (alignCache.get(c.t) || '').normalize('NFC').toLowerCase().replace(/[^0-9a-zà-ỹđ\s]/g, ' ').trim().split(/\s+/).filter(Boolean);
     if (!tr.length || tr.length > 6) continue;
     for (let p = Math.max(0, focus - tr.length + 1); p <= focus && p + tr.length <= fw.length; p++) {
       if (!tr.every((w, j) => fw[p + j] === w)) continue;
