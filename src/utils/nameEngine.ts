@@ -62,11 +62,19 @@ export function postprocess(s: string): string {
     .replace(/(?<=[「『【《（(]) +/g, '')
     .replace(SENT_START, (_m, a, b) => a + b.toUpperCase())
     .replace(/^(Chương \d+: )([a-zà-ỹđ])/, (_m, a, b) => a + b.toUpperCase())
-    .replace(/^[ \t　]+|[ \t　]+$/g, '');
+    .replace(/^[ \t　]+|[ \t　]+$/g, '')
+    .replace(/「/g, '“').replace(/」/g, '”') // lời thoại kiểu Việt; 『』 giữ cho tên thần thông
+    .replace(/”(?=[0-9A-Za-zÀ-ỹĐđ“《『])/g, '” ')
+    .replace(/(?<=[0-9A-Za-zÀ-ỹĐđ:,.!?…])“/g, ' “');
 }
 
-export const titleCase = (s: string) =>
-  s.split(' ').map(w => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ');
+/** viết hoa chữ cái đầu (bỏ qua dấu câu đứng trước như 《「) */
+export const capFirst = (w: string) => w.replace(/[0-9A-Za-zÀ-ỹđĐ]/, m => m.toUpperCase());
+export const titleCase = (s: string) => s.split(' ').map(capFirst).join(' ');
+
+/** bỏ dấu (so khớp lỏng: "thủy"/"thuỷ", "hòa"/"hoà") */
+export const fold = (s: string) =>
+  s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').toLowerCase();
 
 export class NameEngine {
   readonly meta: BiMeta;
@@ -104,7 +112,49 @@ export class NameEngine {
   }
 
   hv(zh: string): string {
-    return [...zh].map(c => this.meta.hv[c] || c).join(' ');
+    return [...zh].map(c => (this.meta.hv[c] || c).split('/')[0]).join(' ');
+  }
+
+  /** Hán Việt kiểu tên: ký tự không có âm (dấu câu, 《》…) dính liền, không chèn dấu cách */
+  hvName(zh: string): string {
+    let out = '';
+    let prevWord = false;
+    for (const c of zh) {
+      const r = this.meta.hv[c];
+      if (r) { out += (prevWord ? ' ' : '') + r.split('/')[0]; prevWord = true; }
+      else { out += c; prevWord = /[0-9A-Za-z]/.test(c); }
+    }
+    return out.trim();
+  }
+
+  /**
+   * Dò cụm chữ Trung ứng với các âm tiết Việt vừa chạm (máy dịch để nguyên Hán Việt cho tên lạ).
+   * sylls: âm tiết (thường) của cụm từ; focus: âm tiết được chạm; frac: vị trí tương đối trong đoạn.
+   * Trả về null nếu không khớp được chữ nào.
+   */
+  locate(z: string, sylls: string[], focus: number, frac: number): { start: number; end: number } | null {
+    const reads = [...z].map(c => (this.meta.hv[c] || '').split('/').filter(Boolean));
+    const expect = frac * z.length;
+    const find = (ss: string[], loose: boolean) => {
+      const eq = (a: string, b: string) => (loose ? fold(a) === fold(b) : a === b);
+      let best = -1, bestD = Infinity;
+      for (let i = 0; i + ss.length <= z.length; i++) {
+        if (!ss.every((s, j) => reads[i + j].some(r => eq(r, s)))) continue;
+        const d = Math.abs(i - expect);
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      return best;
+    };
+    for (const loose of [false, true]) {
+      // cả cụm, rồi co dần về quanh âm tiết được chạm
+      for (let len = sylls.length; len >= 1; len--) {
+        for (let a = Math.max(0, focus - len + 1); a <= focus && a + len <= sylls.length; a++) {
+          const i = find(sylls.slice(a, a + len), loose);
+          if (i >= 0) return { start: i, end: i + len };
+        }
+      }
+    }
+    return null;
   }
 
   isBase(zh: string) { return this.base.has(zh); }

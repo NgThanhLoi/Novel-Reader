@@ -55,3 +55,46 @@ export async function translateLines(lines: string[]): Promise<string[]> {
   }
   return out;
 }
+
+/** dịch một lượt, trả về null nếu API gộp/tách dòng (không gọi lẻ từng dòng) */
+export async function translateBatchStrict(lines: string[]): Promise<string[] | null> {
+  const res = (await call(lines.join('\n'))).replace(/\n+$/, '').split('\n');
+  return res.length === lines.length ? res : null;
+}
+
+const alignCache = new Map<string, string>();
+
+/**
+ * Dò chữ gốc cho một từ được dịch nghĩa (không phải Hán Việt):
+ * dịch các cụm 1–4 chữ quanh vị trí ước chừng, chọn cụm có bản dịch khớp liền mạch
+ * với các âm tiết quanh chỗ chạm (phải phủ âm tiết được chạm), ưu tiên cụm dài và gần.
+ */
+export async function alignByMeaning(
+  z: string, guess: number, words: string[], focus: number
+): Promise<{ start: number; end: number } | null> {
+  const R = 10, a = Math.max(0, guess - R), b = Math.min(z.length, guess + R);
+  const cands: Array<{ s: number; e: number; t: string }> = [];
+  for (let s = a; s < b; s++) for (let L = 1; L <= 4 && s + L <= b; L++) {
+    const t = z.slice(s, s + L);
+    if (/[\s，。！？、：；“”「」『』《》（）…—,.!?]/.test(t)) continue;
+    cands.push({ s, e: s + L, t });
+  }
+  const need = [...new Set(cands.map(c => c.t))].filter(t => !alignCache.has(t));
+  if (need.length) {
+    const out = await translateBatchStrict(need);
+    if (!out) return null;
+    need.forEach((t, i) => alignCache.set(t, out[i]));
+  }
+  const fw = words.map(w => w.normalize('NFC').toLowerCase());
+  let best: { start: number; end: number } | null = null, bestScore = -Infinity;
+  for (const c of cands) {
+    const tr = (alignCache.get(c.t) || '').toLowerCase().replace(/[^0-9a-zà-ỹđ\s]/g, ' ').trim().split(/\s+/).filter(Boolean);
+    if (!tr.length || tr.length > 6) continue;
+    for (let p = Math.max(0, focus - tr.length + 1); p <= focus && p + tr.length <= fw.length; p++) {
+      if (!tr.every((w, j) => fw[p + j] === w)) continue;
+      const score = Math.min(tr.length, 2) * 10 - c.t.length * 2 - Math.abs(c.s - guess) * 0.5; // đủ tin cậy thì lấy cụm ngắn nhất
+      if (score > bestScore) { bestScore = score; best = { start: c.s, end: c.e }; }
+    }
+  }
+  return best;
+}

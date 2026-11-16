@@ -1,49 +1,124 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Download, Search, Upload, X, RotateCcw, Trash2, Languages } from 'lucide-react';
-import { NameEngine, NameEntry, Segment, titleCase } from '../utils/nameEngine';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, Download, Search, Upload, X, RotateCcw, Ban, Pencil, Check, Loader2, Copy } from 'lucide-react';
+import { NameEngine, NameEntry, Segment, capFirst, titleCase } from '../utils/nameEngine';
+import { translateLines } from '../utils/stvTranslate';
 
 export interface PanelTheme {
   panel: string; // lớp màu nền/chữ của khung
   border: string;
 }
 
-const sheetWrap = 'fixed inset-0 z-[60] bg-black/50 flex items-end sm:items-center justify-center';
-const sheetBox = 'w-full sm:max-w-lg max-h-[85vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border shadow-2xl p-4 text-sm';
 const btn = 'px-3 py-1.5 rounded-lg border border-current/20 text-xs font-semibold hover:bg-current/10 active:scale-95 transition';
-const btnPrimary = 'px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold active:scale-95 transition';
+const btnPrimary = 'px-4 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold active:scale-95 transition disabled:opacity-40';
 
-// ---------------- đoạn văn có name bấm được ----------------
+// ---------------- đoạn văn: chạm từ bất kỳ để sửa (giống STV) ----------------
+export interface TapInfo {
+  el: HTMLElement;
+  key?: string; // chạm vào name đang có
+  sylls?: string[]; // các âm tiết của cụm từ được chạm (chữ thường, bỏ dấu câu)
+  focus?: number; // âm tiết được chạm trong sylls
+  near?: string[]; // các âm tiết quanh chỗ chạm ('#' = name / ranh giới)
+  nearFocus?: number;
+  frac: number; // vị trí tương đối của từ trong đoạn (0..1)
+  from: number; // khoảng token để tô đỏ
+  to: number;
+}
+
+interface Tok { s: string; k?: string; w?: boolean; off: number }
+
+const WORD = /[0-9A-Za-zÀ-ỹđĐ]/;
+const isCap = (s: string) => { const c = s.replace(/^[^0-9A-Za-zÀ-ỹđĐ]+/, '')[0]; return !!c && c !== c.toLowerCase(); };
+const syl = (s: string) => s.toLowerCase().replace(/[^0-9a-zà-ỹđ]/g, '');
+
+function tokenize(segs: Segment[]): Tok[] {
+  const out: Tok[] = [];
+  let off = 0;
+  for (const x of segs) {
+    if (x.k) { out.push({ s: x.s, k: x.k, off }); off += x.s.length; continue; }
+    for (const p of x.s.split(/(\s+)/)) {
+      if (!p) continue;
+      out.push({ s: p, w: WORD.test(p), off });
+      off += p.length;
+    }
+  }
+  return out;
+}
+
 export const SegmentText: React.FC<{
   segs: Segment[];
   editMode: boolean;
-  onName?: (key: string) => void;
-}> = ({ segs, editMode, onName }) => (
-  <>
-    {segs.map((x, i) =>
-      x.k && editMode ? (
-        <span
-          key={i}
-          data-name={x.k}
-          onClick={e => { e.stopPropagation(); onName?.(x.k!); }}
-          className="cursor-pointer rounded-sm border-b border-dotted border-amber-500 hover:bg-amber-500/15"
-        >
-          {x.s}
-        </span>
-      ) : (
-        <React.Fragment key={i}>{x.s}</React.Fragment>
-      )
-    )}
-  </>
-);
+  hl?: [number, number] | null;
+  onTap?: (t: TapInfo) => void;
+}> = ({ segs, editMode, hl, onTap }) => {
+  const toks = useMemo(() => (editMode ? tokenize(segs) : null), [segs, editMode]);
+  if (!toks) return <>{segs.map(x => x.s).join('')}</>;
+  const total = toks.length ? toks[toks.length - 1].off + toks[toks.length - 1].s.length : 1;
 
-// ---------------- sửa một name ----------------
+  const tap = (i: number, el: HTMLElement) => {
+    const t = toks[i];
+    const frac = (t.off + t.s.length / 2) / total;
+    if (t.k) return onTap?.({ el, key: t.k, frac, from: i, to: i });
+    // từ viết hoa: gom cả cụm viết hoa liền kề (tên lạ máy để Hán Việt), dừng ở dấu câu
+    let a = i, b = i;
+    if (isCap(t.s)) {
+      const stopAfter = (s: string) => /[^0-9A-Za-zÀ-ỹđĐ]$/.test(s);
+      const stopBefore = (s: string) => /^[^0-9A-Za-zÀ-ỹđĐ]/.test(s);
+      while (a - 2 >= 0 && toks[a - 1].s.trim() === '' && toks[a - 2].w && isCap(toks[a - 2].s) && !stopAfter(toks[a - 2].s) && !stopBefore(toks[a].s)) a -= 2;
+      while (b + 2 < toks.length && toks[b + 1].s.trim() === '' && toks[b + 2].w && isCap(toks[b + 2].s) && !stopAfter(toks[b].s) && !stopBefore(toks[b + 2].s)) b += 2;
+    }
+    const idx: number[] = [];
+    for (let j = a; j <= b; j += 2) idx.push(j);
+    // âm tiết quanh chỗ chạm (dò theo nghĩa)
+    const left: string[] = [], right: string[] = [];
+    for (let j = i - 1; j >= 0 && left.length < 6; j--) if (toks[j].k) { left.unshift('#'); break; } else if (toks[j].w) left.unshift(syl(toks[j].s));
+    for (let j = i + 1; j < toks.length && right.length < 6; j++) if (toks[j].k) { right.push('#'); break; } else if (toks[j].w) right.push(syl(toks[j].s));
+    onTap?.({ el, sylls: idx.map(j => syl(toks[j].s)), focus: idx.indexOf(i), near: [...left, syl(t.s), ...right], nearFocus: left.length, frac, from: a, to: b });
+  };
+
+  return (
+    <>
+      {toks.map((t, i) => {
+        if (!t.k && !t.w) return <React.Fragment key={i}>{t.s}</React.Fragment>;
+        const on = hl && i >= hl[0] && i <= hl[1];
+        return (
+          <span
+            key={i}
+            data-tap=""
+            onClick={e => { e.stopPropagation(); tap(i, e.currentTarget); }}
+            className={`cursor-pointer rounded-sm ${on ? 'bg-red-500/20 text-red-600 dark:text-red-400' : t.k ? 'border-b border-dotted border-amber-500 hover:bg-amber-500/15' : 'hover:bg-current/10'}`}
+          >
+            {t.s}
+          </span>
+        );
+      })}
+    </>
+  );
+};
+
+// ---------------- hộp sửa name nổi cạnh từ được chạm ----------------
 export interface EditCtx {
-  z: string; // câu gốc chứa cụm
-  start: number;
+  z: string; // câu gốc
+  start: number; // -1 = chưa dò được, để người dùng chạm chữ Trung
   end: number;
+  anchor?: DOMRect | null;
+  guess?: number; // không dò được: vị trí ước chừng trong câu gốc để tô gợi ý
+  aligning?: boolean; // đang dò theo nghĩa
 }
 
-export const NameEditor: React.FC<{
+const meaningCache = new Map<string, string>();
+
+function variants(engine: NameEngine, zh: string) {
+  const hv = engine.hvName(zh);
+  const words = hv.split(' ');
+  const t = titleCase(hv);
+  const out: Array<{ label: string; v: string; tip?: string }> = [{ label: 'HV', v: t, tip: 'Hán Việt — hoa toàn bộ' }];
+  if (words.length >= 2) out.push({ label: 'HV-t', v: [...t.split(' ').slice(0, -1), words[words.length - 1]].join(' '), tip: 'Hán Việt — thường chữ cuối (tông, sơn, gia…)' });
+  if (words.length >= 2) out.push({ label: 'Hv', v: capFirst(hv), tip: 'Hán Việt — hoa chữ đầu' });
+  out.push({ label: 'hv', v: hv, tip: 'Hán Việt — chữ thường' });
+  return out;
+}
+
+export const NamePopover: React.FC<{
   engine: NameEngine;
   ctx: EditCtx;
   theme: PanelTheme;
@@ -51,162 +126,226 @@ export const NameEditor: React.FC<{
   onReset: (zh: string) => void;
   onClose: () => void;
 }> = ({ engine, ctx, theme, onSave, onReset, onClose }) => {
-  const [start, setStart] = useState(ctx.start);
-  const [end, setEnd] = useState(ctx.end);
-  const zh = ctx.z.slice(start, end);
-  const hv = engine.hv(zh);
-  const cur = engine.current(zh);
-  const user = engine.userEntry(zh);
-  const base = engine.baseValue(zh);
-  const [val, setVal] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    setVal(cur ?? titleCase(hv));
-    inputRef.current?.focus();
-    inputRef.current?.select();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zh]);
-
-  const isNew = cur === undefined;
+  const { z } = ctx;
+  const [sel, setSel] = useState<{ s: number; e: number } | null>(ctx.start >= 0 ? { s: ctx.start, e: ctx.end } : null);
+  const zh = sel ? z.slice(sel.s, sel.e) : '';
+  const cur = zh ? engine.current(zh) : undefined;
+  const base = zh ? engine.baseValue(zh) : undefined;
+  const user = zh ? engine.userEntry(zh) : undefined;
   const changedFromBase = !!user && (base === undefined ? user.v !== null : user.v !== base);
-  const save = () => { const v = val.trim(); if (v) { onSave(zh, v); onClose(); } };
+  const [custom, setCustom] = useState('');
+  const [meaning, setMeaning] = useState<string | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<React.CSSProperties>({ visibility: 'hidden' });
 
-  return (
-    <div className={sheetWrap} onClick={onClose}>
-      <div className={`${sheetBox} ${theme.panel} ${theme.border}`} onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-bold flex items-center gap-2"><Languages className="w-4 h-4 text-amber-500" />Sửa name</h3>
-          <button onClick={onClose} className="p-1 opacity-70 hover:opacity-100"><X className="w-4 h-4" /></button>
-        </div>
-
-        {/* cụm chữ gốc + mở rộng / thu hẹp */}
-        <div className="flex items-center gap-1.5 mb-1">
-          <button className={btn} title="Mở rộng sang trái" disabled={start <= 0} onClick={() => setStart(s => Math.max(0, s - 1))}>
-            <ChevronLeft className="w-3.5 h-3.5 inline" />+
-          </button>
-          <button className={btn} title="Bớt chữ bên trái" disabled={end - start <= 1} onClick={() => setStart(s => s + 1)}>−</button>
-          <div className="flex-1 text-center text-2xl font-bold tracking-wider break-all">{zh}</div>
-          <button className={btn} title="Bớt chữ bên phải" disabled={end - start <= 1} onClick={() => setEnd(e => e - 1)}>−</button>
-          <button className={btn} title="Mở rộng sang phải" disabled={end >= ctx.z.length} onClick={() => setEnd(e => Math.min(ctx.z.length, e + 1))}>
-            +<ChevronRight className="w-3.5 h-3.5 inline" />
-          </button>
-        </div>
-        <div className="text-center text-xs opacity-70 mb-3">
-          <span className="opacity-60">{ctx.z.slice(Math.max(0, start - 8), start)}</span>
-          <span className="text-amber-500 font-bold">{zh}</span>
-          <span className="opacity-60">{ctx.z.slice(end, end + 8)}</span>
-        </div>
-
-        <dl className="grid grid-cols-[6.5rem_1fr] gap-y-1 text-xs mb-3">
-          <dt className="opacity-60">Hán Việt</dt><dd>{hv}</dd>
-          <dt className="opacity-60">Đang dùng</dt>
-          <dd>{cur ?? <i className="opacity-60">chưa có name (máy dịch)</i>}</dd>
-          {base !== undefined && base !== cur && (<><dt className="opacity-60">Mặc định</dt><dd>{base}</dd></>)}
-        </dl>
-
-        <input
-          ref={inputRef}
-          value={val}
-          onChange={e => setVal(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onClose(); }}
-          className="w-full px-3 py-2 rounded-lg border border-current/25 bg-transparent text-base focus:outline-none focus:border-amber-500"
-          placeholder="Nhập name tiếng Việt"
-        />
-        <div className="flex flex-wrap gap-1.5 mt-2">
-          <button className={btn} onClick={() => setVal(titleCase(hv))}>Hán Việt Hoa</button>
-          <button className={btn} onClick={() => setVal(hv)}>hán việt thường</button>
-          <button className={btn} onClick={() => setVal(v => (v ? v[0].toUpperCase() + v.slice(1).toLowerCase() : v))}>Hoa chữ đầu</button>
-        </div>
-
-        {isNew && (
-          <p className="text-[11px] opacity-70 mt-3">
-            Name mới: các đoạn có 「{zh}」 sẽ được dịch lại (chương đang đọc dịch ngay, chương khác dịch khi mở).
-          </p>
-        )}
-
-        <div className="flex flex-wrap items-center justify-between gap-2 mt-4">
-          <div className="flex gap-1.5">
-            {!isNew && (
-              <button className={btn} title="Không phải tên riêng — để máy dịch nghĩa" onClick={() => { onSave(zh, null); onClose(); }}>
-                <Trash2 className="w-3.5 h-3.5 inline mr-1" />Bỏ name
-              </button>
-            )}
-            {changedFromBase && (
-              <button className={btn} onClick={() => { onReset(zh); onClose(); }}>
-                <RotateCcw className="w-3.5 h-3.5 inline mr-1" />Mặc định
-              </button>
-            )}
-          </div>
-          <div className="flex gap-1.5">
-            <button className={btn} onClick={onClose}>Hủy</button>
-            <button className={btnPrimary} onClick={save}>Lưu</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ---------------- bảng chữ gốc của một đoạn ----------------
-export const SourcePanel: React.FC<{
-  engine: NameEngine;
-  z: string;
-  vi: Segment[];
-  theme: PanelTheme;
-  onPick: (ctx: EditCtx) => void;
-  onClose: () => void;
-}> = ({ engine, z, vi, theme, onPick, onClose }) => {
-  const [sel, setSel] = useState<{ s: number; e: number } | null>(null);
   const cover = useMemo(() => {
     const a: Array<{ start: number; end: number } | null> = Array(z.length).fill(null);
     for (const sp of engine.spans(z)) for (let i = sp.start; i < sp.end; i++) a[i] = sp;
     return a;
   }, [engine, z]);
 
-  const tap = (i: number) => {
-    if (!sel) return setSel({ s: i, e: i + 1 });
-    if (i >= sel.s && i < sel.e) return setSel({ s: i, e: i + 1 });
+  // giá trị gợi ý trong ô tự nhập + dịch nghĩa
+  useEffect(() => {
+    setCustom(zh ? cur ?? titleCase(engine.hvName(zh)) : '');
+    setMeaning(null);
+    if (!zh) return;
+    if (meaningCache.has(zh)) { setMeaning(meaningCache.get(zh)!); return; }
+    let alive = true;
+    const t = setTimeout(() => {
+      translateLines([zh]).then(r => {
+        const m = (r[0] || '').trim().replace(/[.。]$/, '');
+        meaningCache.set(zh, m);
+        if (alive) setMeaning(m);
+      }).catch(() => alive && setMeaning(''));
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zh]);
+
+  // vị trí: máy tính -> nổi ngay dưới/trên từ; điện thoại -> neo đáy màn hình, cuộn từ lên cho khỏi bị che
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    const W = window.innerWidth, H = window.innerHeight, h = box.offsetHeight;
+    const r = ctx.anchor;
+    if (W < 640 || !r) {
+      setPos(W < 640 ? { left: 0, right: 0, bottom: 0 } : { left: (W - box.offsetWidth) / 2, top: Math.max(16, H * 0.15) });
+      if (r && W < 640 && r.bottom > H - h - 12) window.scrollBy({ top: r.bottom - (H - h) + 48, behavior: 'smooth' });
+      return;
+    }
+    const w = box.offsetWidth;
+    const left = Math.min(Math.max(8, r.left), W - w - 8);
+    const top = r.bottom + 6 + h <= H - 8 ? r.bottom + 6 : Math.max(8, r.top - h - 6);
+    setPos({ left, top });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx]);
+
+  // chạm ra ngoài / Esc -> đóng (chạm từ khác thì ReaderView mở lại hộp ở từ đó)
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (boxRef.current?.contains(t) || t.closest?.('[data-tap]')) return;
+      onClose();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const id = setTimeout(() => document.addEventListener('click', onDoc), 0);
+    document.addEventListener('keydown', onKey);
+    return () => { clearTimeout(id); document.removeEventListener('click', onDoc); document.removeEventListener('keydown', onKey); };
+  }, [onClose]);
+
+  useEffect(() => {
+    stripRef.current?.querySelector('[data-sel],[data-guess]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, [sel?.s]);
+
+  const tapChar = (i: number) => {
+    const k = cover[i];
+    if (!sel) return setSel(k ? { s: k.start, e: k.end } : { s: i, e: i + 1 });
+    if (i >= sel.s && i < sel.e) return setSel(k && (k.start !== sel.s || k.end !== sel.e) ? { s: k.start, e: k.end } : { s: i, e: i + 1 });
     setSel({ s: Math.min(sel.s, i), e: Math.max(sel.e, i + 1) });
   };
-  const picked = sel ? z.slice(sel.s, sel.e) : '';
+  // mở rộng nuốt trọn name kề bên
+  const grow = (side: -1 | 1) => sel && setSel(side < 0
+    ? { s: cover[sel.s - 1]?.start ?? Math.max(0, sel.s - 1), e: sel.e }
+    : { s: sel.s, e: cover[sel.e]?.end ?? Math.min(z.length, sel.e + 1) });
+  const shrink = (side: -1 | 1) => sel && sel.e - sel.s > 1 && setSel(side < 0 ? { s: sel.s + 1, e: sel.e } : { s: sel.s, e: sel.e - 1 });
+
+  const save = (v: string | null) => { if (!zh) return; if (v !== null && !v.trim()) return; onSave(zh, v === null ? null : v.trim()); onClose(); };
+
+  const rows = useMemo(() => {
+    if (!zh) return [];
+    const list: Array<{ label: string; v: string; tip?: string }> = [];
+    if (cur !== undefined) list.push({ label: 'Đang', v: cur, tip: 'Name đang dùng' });
+    if (base !== undefined && base !== cur) list.push({ label: 'Gốc', v: base, tip: 'Name mặc định của gói' });
+    list.push(...variants(engine, zh));
+    const seen = new Set<string>();
+    return list.filter(r => (seen.has(r.v) ? false : (seen.add(r.v), true)));
+  }, [engine, zh, cur, base]);
+
+  const ctxFrom = sel ? Math.max(0, sel.s - 40) : 0;
+  const ctxTo = sel ? Math.min(z.length, sel.e + 40) : z.length;
 
   return (
-    <div className={sheetWrap} onClick={onClose}>
-      <div className={`${sheetBox} ${theme.panel} ${theme.border}`} onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="font-bold">Câu gốc</h3>
-          <button onClick={onClose} className="p-1 opacity-70 hover:opacity-100"><X className="w-4 h-4" /></button>
+    <div
+      ref={boxRef}
+      style={pos}
+      onClick={e => e.stopPropagation()}
+      className={`fixed z-[60] w-full sm:w-[24rem] max-h-[62vh] overflow-y-auto rounded-t-2xl sm:rounded-xl border shadow-2xl text-sm ${theme.panel} ${theme.border}`}
+    >
+      {/* thanh trên: mở rộng / thu hẹp / đóng */}
+      <div className="sticky top-0 z-10 flex items-center gap-1 px-2 py-1.5 border-b border-current/10 bg-inherit">
+        <button className={`${btn} px-2`} disabled={!sel || sel.s <= 0} onClick={() => grow(-1)} title="Mở rộng sang trái">
+          <ChevronLeft className="w-3.5 h-3.5 inline -mt-0.5" />Mở rộng
+        </button>
+        <button className={`${btn} px-2`} disabled={!sel || sel.e - sel.s <= 1} onClick={() => shrink(-1)} title="Bớt chữ trái">−</button>
+        <div className="flex-1 min-w-0 text-center">
+          <div className="text-lg font-bold leading-tight truncate">{zh || '—'}</div>
         </div>
-        <p className="text-xs opacity-75 mb-3 leading-relaxed">{vi.map(x => x.s).join('')}</p>
-        <p className="text-[11px] opacity-60 mb-2">
-          Chạm chữ đầu rồi chạm chữ cuối để chọn cụm. Chữ gạch chân là name đang có (chạm vào để chọn cả cụm).
-        </p>
-        <div className="text-xl leading-[2.4rem] tracking-wide select-none">
-          {[...z].map((c, i) => {
+        <button className={`${btn} px-2`} disabled={!sel || sel.e - sel.s <= 1} onClick={() => shrink(1)} title="Bớt chữ phải">−</button>
+        <button className={`${btn} px-2`} disabled={!sel || sel.e >= z.length} onClick={() => grow(1)} title="Mở rộng sang phải">
+          Mở rộng<ChevronRight className="w-3.5 h-3.5 inline -mt-0.5" />
+        </button>
+        <button onClick={onClose} className="p-1.5 opacity-60 hover:opacity-100" title="Đóng"><X className="w-4 h-4" /></button>
+      </div>
+
+      <div className="p-3 space-y-3">
+        {/* câu gốc: chạm chữ để chọn lại cụm */}
+        <div ref={stripRef} className="max-h-[4.6rem] overflow-y-auto text-lg leading-8 tracking-wide select-none rounded-lg bg-current/[0.04] px-2">
+          {ctxFrom > 0 && <span className="opacity-40">…</span>}
+          {[...z.slice(ctxFrom, ctxTo)].map((c, j) => {
+            const i = j + ctxFrom;
             const inSel = sel && i >= sel.s && i < sel.e;
-            const k = cover[i];
+            const near = !sel && ctx.guess !== undefined && Math.abs(i - ctx.guess) <= 4;
             return (
               <span
                 key={i}
+                data-sel={inSel && i === sel!.s ? '' : undefined}
+                data-guess={near && i === Math.max(0, ctx.guess! - 4) ? '' : undefined}
                 title={engine.meta.hv[c] || ''}
-                onClick={() => (k && !sel ? setSel({ s: k.start, e: k.end }) : tap(i))}
-                className={`cursor-pointer px-[1px] rounded ${inSel ? 'bg-amber-500 text-white' : k ? 'border-b-2 border-amber-500/60' : 'hover:bg-current/10'}`}
+                onClick={() => tapChar(i)}
+                className={`cursor-pointer rounded px-[1px] ${inSel ? 'bg-amber-500 text-white' : near ? 'bg-amber-500/20' : cover[i] ? 'border-b-2 border-amber-500/50' : 'hover:bg-current/10'}`}
               >
                 {c}
               </span>
             );
           })}
+          {ctxTo < z.length && <span className="opacity-40">…</span>}
         </div>
-        <div className="flex items-center justify-between gap-2 mt-4 pt-3 border-t border-current/10">
-          <div className="text-xs truncate">
-            {picked ? (<><b className="text-base">{picked}</b> <span className="opacity-70">{engine.hv(picked)}</span></>) : <span className="opacity-60">Chưa chọn</span>}
-          </div>
-          <div className="flex gap-1.5 shrink-0">
-            {sel && <button className={btn} onClick={() => setSel(null)}>Bỏ chọn</button>}
-            <button className={btnPrimary} disabled={!sel} onClick={() => sel && onPick({ z, start: sel.s, end: sel.e })}>Đặt name…</button>
-          </div>
-        </div>
+
+        {!sel ? (
+          ctx.aligning ? (
+            <p className="text-xs opacity-70"><Loader2 className="w-3.5 h-3.5 inline animate-spin mr-1" />Đang dò chữ gốc…</p>
+          ) : <p className="text-xs opacity-70">Không dò được chữ gốc của từ này (vùng tô nhạt là chỗ ước chừng) — chạm chữ Trung ở trên, chữ đầu rồi chữ cuối, để chọn cụm.</p>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 text-xs opacity-70">
+              <span className="truncate">{engine.hv(zh)}</span>
+              <button className="ml-auto p-1 hover:opacity-100" title="Sao chép chữ Trung" onClick={() => navigator.clipboard?.writeText(zh)}>
+                <Copy className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* gợi ý: chạm là lưu luôn */}
+            <div className="rounded-lg border border-current/15 divide-y divide-current/10 overflow-hidden">
+              {rows.map(r => (
+                <div key={r.label + r.v} className="flex items-stretch">
+                  <span title={r.tip} className="w-12 shrink-0 grid place-items-center text-[11px] font-bold bg-emerald-600/80 text-white">{r.label}</span>
+                  <button className="flex-1 min-w-0 text-left px-2.5 py-2 hover:bg-amber-500/10 active:bg-amber-500/20" onClick={() => save(r.v)} title="Chạm để lưu">
+                    <span className="font-semibold">{r.v}</span>
+                    {r.v === cur && <Check className="w-3.5 h-3.5 inline ml-1.5 text-emerald-600" />}
+                    
+                  </button>
+                  <button className="px-2.5 opacity-50 hover:opacity-100" title="Sửa từ gợi ý này" onClick={() => setCustom(r.v)}>
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+              <div className="flex items-stretch">
+                <span className="w-12 shrink-0 grid place-items-center text-[11px] font-bold bg-sky-600/80 text-white" title="Dịch nghĩa (máy dịch)">Nghĩa</span>
+                {meaning === null ? (
+                  <span className="flex-1 px-2.5 py-2 opacity-50"><Loader2 className="w-3.5 h-3.5 inline animate-spin mr-1" />đang dịch…</span>
+                ) : (
+                  <button className="flex-1 min-w-0 text-left px-2.5 py-2 hover:bg-amber-500/10 disabled:opacity-50" disabled={!meaning} onClick={() => meaning && save(meaning)}>
+                    {meaning || 'không dịch được'}
+                  </button>
+                )}
+                {meaning && (
+                  <button className="px-2.5 opacity-50 hover:opacity-100" title="Sửa từ gợi ý này" onClick={() => setCustom(meaning)}>
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* tự nhập */}
+            <div className="flex gap-1.5">
+              <input
+                value={custom}
+                onChange={e => setCustom(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') save(custom); }}
+                className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-current/25 bg-transparent text-base focus:outline-none focus:border-amber-500"
+                placeholder="Tự nhập name…"
+              />
+              <button className={btnPrimary} disabled={!custom.trim()} onClick={() => save(custom)}>Lưu</button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {cur !== undefined && (
+                <button className={btn} title="Không phải tên riêng — để máy dịch nghĩa" onClick={() => save(null)}>
+                  <Ban className="w-3.5 h-3.5 inline mr-1" />Không phải name
+                </button>
+              )}
+              {changedFromBase && (
+                <button className={btn} onClick={() => { onReset(zh); onClose(); }}>
+                  <RotateCcw className="w-3.5 h-3.5 inline mr-1" />Về mặc định{base !== undefined ? `: ${base}` : ''}
+                </button>
+              )}
+              {cur === undefined && (
+                <span className="text-[11px] opacity-60">Name mới — các đoạn có 「{zh}」 sẽ được dịch lại.</span>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -312,10 +451,10 @@ export const NameListDrawer: React.FC<{
         ) : (
           <div className="flex-1 overflow-y-auto -mx-1 px-1 space-y-1">
             {tab === 'all' && !q.trim() && <p className="text-xs opacity-60 p-2">Gõ để tìm.</p>}
-            {tab === 'edited' && !edited.length && <p className="text-xs opacity-60 p-2">Chưa sửa name nào. Bật chế độ sửa name (biểu tượng bút) rồi chạm vào tên trong truyện.</p>}
+            {tab === 'edited' && !edited.length && <p className="text-xs opacity-60 p-2">Chưa sửa name nào. Bật chế độ sửa name (biểu tượng bút) rồi chạm vào từ bất kỳ trong truyện.</p>}
             {rows.map(r => (
               <div key={r.zh} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-current/5">
-                <button className="flex-1 text-left min-w-0" onClick={() => onEdit(r.zh)}>
+                <button className="flex-1 text-left min-w-0" data-tap="" onClick={() => onEdit(r.zh)}>
                   <span className="font-semibold">{r.zh}</span>
                   <span className="opacity-50"> = </span>
                   <span className={r.v === null ? 'italic opacity-60' : ''}>{r.v ?? '(bỏ name)'}</span>

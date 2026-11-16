@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   ArrowLeft, 
   Settings2, 
@@ -28,7 +28,8 @@ import {
 } from 'lucide-react';
 import { Novel, Chapter, ReaderSettings, ReaderTheme, ReaderFontFamily, ReaderContentWidth } from '../types';
 import { useNames } from '../hooks/useNames';
-import { EditCtx, NameEditor, NameListDrawer, PanelTheme, SegmentText, SourcePanel } from './NameTools';
+import { alignByMeaning } from '../utils/stvTranslate';
+import { EditCtx, NameListDrawer, NamePopover, PanelTheme, SegmentText, TapInfo } from './NameTools';
 
 interface ReaderViewProps {
   novel: Novel;
@@ -83,7 +84,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     try { return localStorage.getItem('nr_name_edit') === '1'; } catch { return false; }
   });
   const [editCtx, setEditCtx] = useState<EditCtx | null>(null);
-  const [sourcePara, setSourcePara] = useState<number | null>(null);
+  const [hl, setHl] = useState<{ para: number; from: number; to: number } | null>(null);
   const [showNameList, setShowNameList] = useState(false);
   const toggleNameEdit = () => {
     setNameEditMode(v => {
@@ -92,11 +93,35 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     });
   };
   const paraSource = (i: number) => (i === -1 ? names.chapter?.tz : names.chapter?.z[i]) || '';
-  const openNameAt = (i: number, key: string) => {
+  // chạm một từ (name hoặc chữ thường) -> mở hộp sửa ngay cạnh từ đó
+  const onWordTap = (i: number, t: TapInfo) => {
+    if (!names.engine) return;
     const z = paraSource(i);
-    const at = z.indexOf(key);
-    setEditCtx(at >= 0 ? { z, start: at, end: at + key.length } : { z: key, start: 0, end: key.length });
+    const anchor = t.el.getBoundingClientRect();
+    setHl({ para: i, from: t.from, to: t.to });
+    if (t.key) {
+      // nhiều chỗ cùng name: chọn chỗ gần vị trí tương đối nhất
+      let at = -1, best = Infinity;
+      for (let j = z.indexOf(t.key); j >= 0; j = z.indexOf(t.key, j + 1)) {
+        const d = Math.abs(j - t.frac * z.length);
+        if (d < best) { best = d; at = j; }
+      }
+      setEditCtx(at >= 0 ? { z, start: at, end: at + t.key.length, anchor } : { z: t.key, start: 0, end: t.key.length, anchor });
+      return;
+    }
+    const loc = names.engine.locate(z, t.sylls || [], t.focus || 0, t.frac);
+    if (loc) { setEditCtx({ z, start: loc.start, end: loc.end, anchor }); return; }
+    // từ dịch nghĩa: dò bằng cách dịch các cụm chữ quanh vị trí ước chừng
+    const guess = Math.round(t.frac * z.length);
+    const pending: EditCtx = { z, start: -1, end: -1, anchor, guess, aligning: true };
+    setEditCtx(pending);
+    alignByMeaning(z, guess, t.near || [], t.nearFocus || 0)
+      .catch(() => null)
+      .then(r => setEditCtx(c => (c !== pending ? c : r ? { z, start: r.start, end: r.end, anchor } : { ...pending, aligning: false })));
   };
+  const closeEditor = useCallback(() => { setEditCtx(null); setHl(null); }, []);
+  useEffect(() => { closeEditor(); }, [currentChapterIdx, nameEditMode, closeEditor]);
+  const hlFor = (i: number): [number, number] | null => (hl && hl.para === i ? [hl.from, hl.to] : null);
   const bodyText = names.view?.plain ?? currentChapter.content;
 
   // Theme styling map
@@ -411,7 +436,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   className={`p-2 rounded-lg border transition-colors ${currentThemeStyle.border} ${
                     nameEditMode ? 'bg-amber-500 text-white border-amber-600' : 'hover:opacity-80'
                   }`}
-                  title={nameEditMode ? 'Tắt chế độ sửa name' : 'Bật chế độ sửa name (chạm tên / đoạn để sửa)'}
+                  title={nameEditMode ? 'Tắt chế độ sửa name' : 'Bật chế độ sửa name (chạm từ bất kỳ để sửa)'}
                 >
                   <PenLine className="w-4 h-4" />
                 </button>
@@ -573,11 +598,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             {novel.title} • Chương {currentChapterIdx + 1} / {novel.chapters.length}
           </span>
           <h1
-            className={`text-2xl sm:text-3xl font-bold font-serif tracking-tight leading-tight ${names.view && nameEditMode ? 'cursor-pointer' : ''}`}
-            onClick={names.view && nameEditMode ? () => setSourcePara(-1) : undefined}
+            className="text-2xl sm:text-3xl font-bold font-serif tracking-tight leading-tight"
           >
             {names.view ? (
-              <SegmentText segs={names.view.title} editMode={nameEditMode} onName={k => openNameAt(-1, k)} />
+              <SegmentText segs={names.view.title} editMode={nameEditMode} hl={hlFor(-1)} onTap={t => onWordTap(-1, t)} />
             ) : (
               currentChapter.title
             )}
@@ -604,10 +628,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             ? names.view.paras.map((segs, idx) => (
                 <p
                   key={idx}
-                  className={`tracking-normal text-pretty ${nameEditMode ? 'cursor-pointer hover:bg-current/[0.04] rounded' : ''}`}
-                  onClick={nameEditMode ? () => setSourcePara(idx) : undefined}
+                  className="tracking-normal text-pretty"
                 >
-                  <SegmentText segs={segs} editMode={nameEditMode} onName={k => openNameAt(idx, k)} />
+                  <SegmentText segs={segs} editMode={nameEditMode} hl={hlFor(idx)} onTap={t => onWordTap(idx, t)} />
                 </p>
               ))
             : paragraphs.map((p, idx) => (
@@ -881,26 +904,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         </div>
       )}
 
-      {names.engine && sourcePara !== null && names.view && (
-        <SourcePanel
-          engine={names.engine}
-          z={paraSource(sourcePara)}
-          vi={sourcePara === -1 ? names.view.title : names.view.paras[sourcePara] || []}
-          theme={panelTheme}
-          onPick={ctx => { setSourcePara(null); setEditCtx(ctx); }}
-          onClose={() => setSourcePara(null)}
-        />
-      )}
-
       {names.engine && editCtx && (
-        <NameEditor
+        <NamePopover
           key={`${editCtx.z}:${editCtx.start}:${editCtx.end}`}
           engine={names.engine}
           ctx={editCtx}
           theme={panelTheme}
           onSave={(zh, v) => names.setNames({ [zh]: v })}
           onReset={names.resetName}
-          onClose={() => setEditCtx(null)}
+          onClose={closeEditor}
         />
       )}
 
@@ -909,7 +921,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           engine={names.engine}
           novelTitle={novel.title}
           theme={panelTheme}
-          onEdit={zh => setEditCtx({ z: zh, start: 0, end: zh.length })}
+          onEdit={zh => { setHl(null); setEditCtx({ z: zh, start: 0, end: zh.length }); }}
           onReset={names.resetName}
           onImport={changes => names.setNames(changes)}
           onClose={() => setShowNameList(false)}
