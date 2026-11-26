@@ -203,6 +203,7 @@ export async function importPackFile(file: File, onStatus?: (s: string) => void)
 interface RemoteManifest {
   version?: string;
   parts?: number; // gói chia nhiều phần (mạng yếu tải 1 file 20MB hay đứt)
+  base?: string; // tên phần theo phiên bản (packs/<base>.partN): đẩy bản mới không đè phần của bản đang dùng
 }
 
 async function remoteManifest(novelId: string): Promise<RemoteManifest | null> {
@@ -244,7 +245,8 @@ async function downloadPack(novelId: string, manifest: RemoteManifest | null, on
     const parts: Blob[] = [];
     for (let i = 0; i < manifest.parts; i++) {
       onStatus?.(`Đang tải gói song ngữ từ cloud (${i + 1}/${manifest.parts})…`);
-      parts.push(await fetchBlob(`/api/files/packs/${encodeURIComponent(novelId)}.nrpack.part${i}`));
+      const name = manifest.base ? manifest.base : `${novelId}.nrpack`;
+      parts.push(await fetchBlob(`/api/files/packs/${encodeURIComponent(name)}.part${i}`));
     }
     blob = new Blob(parts);
   } else {
@@ -282,15 +284,18 @@ export async function ensurePack(novelId: string, onStatus?: (s: string) => void
   const m = await getMeta(novelId).catch(() => undefined);
   if (checked.has(novelId)) return m || null;
   checked.add(novelId);
+  const manifest = await remoteManifest(novelId);
   try {
-    const manifest = await remoteManifest(novelId);
     if (!m) return await downloadPack(novelId, manifest, onStatus);
     if (manifest?.version && manifest.version !== m.version) {
       return (await downloadPack(novelId, manifest, onStatus)) || m;
     }
     return m;
-  } catch {
-    return m || null;
+  } catch (e) {
+    checked.delete(novelId); // lần mở sau thử tải lại
+    if (m) return m; // giữ gói đang có
+    if (manifest) throw new Error(`Không tải được gói song ngữ (${(e as Error)?.message || e}) — tải lại trang để thử lại`);
+    return null;
   }
 }
 

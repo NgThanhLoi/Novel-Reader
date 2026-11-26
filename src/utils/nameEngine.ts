@@ -56,18 +56,20 @@ function cn2int(s: string): number {
 }
 
 // ---- hậu xử lý (XJ_POST + XJ_SENT_START) ----
-const SENT_START = /(^[\s　]*|[「『“])([a-zà-ỹđ])/g;
+const SENT_START = /(^[\s　]*|[「『“‘])([a-zà-ỹđ])/g;
 export function postprocess(s: string): string {
   return s
     .replace(/(?<=\S) {2,}/g, ' ')
-    .replace(/ +(?=[,.!?;:…」』】》）)])/g, '')
-    .replace(/(?<=[「『【《（(]) +/g, '')
+    .replace(/ +(?=[,.!?;:…」』】》）)’])/g, '')
+    .replace(/(?<=[「『【《（(‘]) +/g, '')
     .replace(SENT_START, (_m, a, b) => a + b.toUpperCase())
     .replace(/^(Chương \d+: )([a-zà-ỹđ])/, (_m, a, b) => a + b.toUpperCase())
     .replace(/^[ \t　]+|[ \t　]+$/g, '')
     .replace(/「/g, '“').replace(/」/g, '”') // lời thoại kiểu Việt; 『』 giữ cho tên thần thông
     .replace(/”(?=[0-9A-Za-zÀ-ỹĐđ“《『])/g, '” ')
-    .replace(/(?<=[0-9A-Za-zÀ-ỹĐđ:,.!?…])“/g, ' “');
+    .replace(/(?<=[0-9A-Za-zÀ-ỹĐđ:,.!?…])“/g, ' “')
+    .replace(/’(?=[0-9A-Za-zÀ-ỹĐđ“‘《『])/g, '’ ')
+    .replace(/(?<=[0-9A-Za-zÀ-ỹĐđ:,.!?…])‘/g, ' ‘');
 }
 
 /** viết hoa chữ cái đầu (bỏ qua dấu câu đứng trước như 《「) */
@@ -246,7 +248,7 @@ export class NameEngine {
       const k = keys[parseInt(m[1], 10)];
       let v = k !== undefined ? this.display(k) : m[0];
       // đầu dòng / sau mở ngoặc thoại -> viết hoa chữ đầu
-      if (v && /(^[\s　]*|[「『“]|^Chương \d+: )$/.test(acc)) v = v[0].toUpperCase() + v.slice(1);
+      if (v && /(^[\s　]*|[「『“‘]|^Chương \d+: )$/.test(acc)) v = v[0].toUpperCase() + v.slice(1);
       segs.push(k !== undefined ? (this.phrases.has(k) ? { s: v, k, ph: true } : { s: v, k }) : { s: v });
       acc += v;
       last = m.index + m[0].length;
